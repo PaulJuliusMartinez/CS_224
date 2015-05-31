@@ -1,0 +1,488 @@
+Eurographics Symposium on Rendering (2006) Tomas Akenine-Möller and Wolfgang Heidrich (Editors)
+Bidirectional Instant Radiosity
+B. Segovia 1,2, J. C. Iehl2, R. Mitanchey1 and B. Péroche2 1 LIRIS: Lyon Research Center for Images and Intelligent Information Systems
+2 ENTPE: Ecole Nationale des Travaux Publics de l'Etat
+
+Abstract This paper presents a new sampling strategy to achieve interactive global illumination on one commodity computer. The goal is to propose an efficient numerical stochastic scheme which can be well adapted to a fast rendering algorithm. As we want to provide an efficient sampling strategy to handle difficult settings without sacrificing performance in common cases, we developed an extension of Instant Radiosity [Kel97] in the same way bidirectional path tracing is an extension of path or light tracing. Our idea is to build several estimators and to efficiently combine them to find a set of virtual point light sources which are relevant for the areas of the scene seen by the camera. The resulting algorithm is faster than classical solutions to global illumination. Using today graphics hardware, an interactive frame rate and the convergence of the scheme can be easily obtained in scenes with many light sources, glossy materials or difficult visibility problems.
+Categories and Subject Descriptors (according to ACM CCS): I.3.3 [Computer Graphics]: Bitmap and framebuffer operations I.3.7 [Computer Graphics]: Raytracing, Radiosity
+
+1. Introduction
+Computer graphics as many other numerical domains is a subtle mixture of mathematical and algorithmic methods. The role of a numerician is to efficiently combine them. In this paper, a new sampling strategy to achieve interactive global illumination is presented. The goal is to find a relevant set of virtual point light sources (V PLs) (see [Kel97]) to describe the incoming radiance field and use it to illuminate the areas of the scene seen by the camera. The sampling strategy must be accurate and provide relevant V PLs in a fast and efficient way. Hence, it can be easily combined with a fast rendering method like the simple deferred shading approach we also present in the paper. To achieve this goal, we build bidirectional estimators and generate V PLs from the camera and the light sources. With a sampling / resampling strategy, a V PL distribution with a density proportional to the power they bring to the camera is built.
+The remainder of the paper is organized as follows. Section 2 reminds how the global illumination problem can be formalized as an integration problem suitable for MonteCarlo integration and describes some previous work on the subject. Section 3 suggests in details the new sampling strategies we chose to compute global illumination. Section 4 presents the GPU implementation of our method and
+c The Eurographics Association 2006.
+
+all numerical issues which can be encountered. Section 5 presents some results. A conclusion and possible future work are finally given in Section 6.
+2. Previous Work
+The light transport equation is a simple and short recursive formulation giving the equilibrium of radiance in a given scene [Vea97]:
+Z L(x, e) = Lp(x, e) + L(x, i) fr(x, i, e) cos(i) di
+
+(1) where:
+· L(x, e)is the incoming radiance from point x in direction e ,
+· Lp(x, e) is the emission from point x in direction e, · L(x, i) is the outgoing radiance at point x in direction i, · fr(x, i, e) is the BRDF of the material at point x.
+Therefore, solving the global illumination problem leads to evaluate the light transport equation. In its recursive version, it is unfortunately not suitable for a direct Monte-Carlo application because of its recursive aspect. We can however notice it is appropriate to splitting methods [Whi80] where the law of large numbers is recursively applied. That is why
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+Veach redefined it in path space with its associated measure [Vea97]. As our work is a pure Monte-Carlo integration method, we briefly present his theoretical framework and the notations used in the whole article.
+
+2.1. A Formalism for Monte-Carlo Integration
+
+Veach first proposed the equivalent "three point form" of
+
+equation (1) based only on points [Vea97]. The density func-
+
+tion of point x' seen by point x in direction 0 and the den-
+
+sity p(0) of 0 are related by px(x )
+
+=
+
+p(0
+
+)
+
+|cos(i )| ||x-x ||2
+
+.
+
+Therefore, if M is the scene surface and G(xx ) the ge-
+
+ometric term between x and x', the light transport equation
+
+can be reformulated as:
+
+L(x x ) = Lp(x x ) + Z L(xx ) fs(xxx ) G(xx ) dA(x) (2)
+M
+Secondly, any pixel computation can be defined as the response of a hypothetical sensor to the incident radiance field. Let We( j)(xx ) be the sensor responsivity. The power Ij transmitted by such a sensor is then defined by the measurement equation (3).
+
+Z Ij =
+
+We( j)(xx ) L(xx ) G(xx ) dA(x) dA(x ) (3)
+
+M×M
+
+Using the light transport equation, the measurement equation can be recursively expanded to be expressed in an iterative way:
+
+Z
+Ij = 
+
+Lp(x0x1) G(x0x1) We( j)(xk-1xk)
+
+k=1 Mk+1
+
+k-1
+ fs(xi-1xixi+1) G(xixi+1)
+i=1
+
+dA(x0) ... dA(xk)
+
+(4)
+
+The measurement equation can be finally reformulated as:
+
+Z Ij = f j(x)dµ(x)
+
+
+(5)
+
+f j is defined for each path length k by extracting the appropriate term from expansion (4) and  is the set of all the
+finite length paths.
+
+2.2. Path Integration Algorithms
+Many Monte-Carlo methods have been proposed to solve the measurement equation over the last twenty years. Many of them share two common properties:
+· they generate paths in the scene. · they analytically compute the pd f s of these paths.
+
+Path tracing [Kaj86] is a simple algorithm which computes paths from the camera to a light source. Such a path is a homogeneous Markov chain. Its pd f can thus be analytically expressed as the product of the initial pd f by the transition pd f s used to compute each new bounce. So, p(x) = p(x0x1· · ·xk-1) = p(x0) ik=-02 p(xixi+1). Once the energy flux between the starting point and the light source is established, the light transport equation can be therefore easily evaluated. Light tracing algorithms [DLW93] are quite similar but build paths starting at a light source instead of the camera.
+Bidirectional path tracing, introduced by Lafortune and Willems [LW93] then Veach and Guibas [VG94], proposes to compute two independent paths. The first one is generated from the camera while the second one starts at a light source. The density functions can be analytically evaluated for each path. Since the paths are independent, the pd f of a bidirectional path is then the simple product of the pd f of the camera path by the pd f of the light path. It therefore includes and generalizes path and light tracing.
+For algorithmic reasons, several estimators are created with the same paths or subpaths. For example, in the recursive version of path tracing, the paths used to compute the light transport equation restricted to energy fluxes after k bounces are recursively reused to compute the next contributions. Unfortunately, all these algorithms remain slow and do not seem suitable for interactive rendering.
+
+2.3. Instant Radiosity
+
+Instant Radiosity [Kel97] (IR) is an interesting method to
+compute global illumination for diffuse or not-too-shiny ma-
+terials. The main idea is to factorize computations. Using the
+path integration formulation, N paths xs are first randomly generated from the light sources and stored. Let (x0) be a set of points on M j (the surface of sensor j) and (x1) a set of points on the surface of the scene M (See Figure 1.a). Then:
+
+Ij = E
+
+f j(xs, x1, x0) p(xs, x1, x0)
+
+As (x1, x0) and xs are independent:
+
+p [(xs, x1, x0)] = p(xs)p [(x1, x0)]
+
+Therefore, Instant Radiosity is a standard Monte-Carlo path integration. Its originality relies on the fact that the "light parts" of the paths are constantly reused for all the sensors in the scene.
+
+Algorithmically, all light subpaths are also taken into account but only the ending point of each of them is stored. Such a point is generally called a Virtual Point Light source
+or "V PL". Instant Radiosity is quite appropriate to provide efficient implementations. As Wald et al. showed in [WKB02], coherent ray tracing can be used with IR in a
+very efficient way.
+
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+2.4. Importance-driven methods
+Like other Monte-Carlo methods, Instant Radiosity suffers from variance problems due to inappropriate V PL sampling issues. Importance has been used by many researchers to speed up the convergence rates of off-line rendering in radiosity or Monte-Carlo methods. A detailed discussion is available in [Chr03]. More particularly, a subsequent work has been achieved with photon map techniques [Jen01]. Even if photon map algorithms are numerically quite different from Instant Radiosity (the first ones are non-parametric estimation methods while the second one is an analytical MC approach), the V PL generation is quite similar to the photon generation. Peter and Pietrek propose to trace importance particles from the eye point [PP98]. The resulting distribution is then used to guide the photon tracing step. The method was extended by Keller and Wald [KW00] and Suykens and Willems [SW00] to provide more robust numerical results. All these methods can be used to guide the V PL generation. Unfortunately, they do not seem suitable for interactive rendering. Indeed, many importons (i.e., particles generated from the camera) have to be generated and stored in a first pass. Furthermore, costly density estimations must be performed at each rebound. Finally, starting from a light source can be simply inappropriate for specific difficult integration cases since a very high number of particles may have to be generated before finding the relevant V PLs. This will be discussed with more details in Section 5.
+3. Bidirectional Sampling of the V PLs
+All the limitations of these previous methods motivated our approach. Inspired by the subsequent work achieved by Veach with path integration methods, we extend Instant Radiosity in the same way bidirectional path tracing is an extension of path or light tracing. Instead of generating V PLs only from the light sources, they are also generated from the camera. The goal is to provide an efficient sampling strategy suitable for fast rendering engines as those proposed by Wald et al. or the one we present in this paper.
+3.1. Reverse Instant Radiosity
+Only generating V PLs from the light sources is as arbitrary as only generating paths from the camera or the lights. Indeed, one strategy can be better or worse than the other according to the integrand. Finding caustics is for example much easier with light tracing than with camera path tracing. That is why we propose here an adjoint approach to IR. Instead of only sampling V PLs from the light sources, they are also generated from the camera.
+Our idea comes from a very simple observation. The only points which can illuminate an area of the scene seen by the camera are the points which can see this area. Therefore, the goal is to sample the V PL locations x2 along the surface of
+
+the scene M to solve:
+I j = Z We( j)(x0x1) L(x2x1) fr(x2x1x0)
+M×M×M
+G(x0x1) G(x1x2) dA(x0) dA(x1) dA(x2)(6)
+With a simple camera model (just a pinhole without lens), the V PLs can be algorithmically found by randomly generating length 2 paths from the camera (See Figure 1b). The end of such a path gives the location of a V PL which can bring light to the camera after one bounce. Therefore, we have a new and simple sampling strategy which is to find the ending points of length 2 camera paths. This set will be denoted Ms.
+Once a V PL has been sampled, the information necessary to perform Monte-Carlo evaluations has to be computed.
+
+Estimation of V PL density of probability p(x2) Each V PL is the end of a length 2 camera path x. As x is a
+homogeneous Markov chain, its density p is expressed as
+p(x) = p(x1)p(x1x2) where x1 is a point directly visible by the camera and x2 is the location of the V PL. p(x1x2) is therefore the density of x2 seen by x1. Hence, computing the density of x1 consists in evaluating the mean of p(x1x2).
+
+In other terms, p(x2) is the probability of reaching this point by a path of length 2. Formally, it is the second marginal law of x = (x1, x2). Therefore, if Mc is the set of all the points visible from the camera:
+
+Z p(x2) = p(x1)p(x1x2)dx1
+Mc
+For example, if independent and uniform random variables xi1 are used to sample Mc,
+
+p(x2)
+
+=
+
+lim
+N 
+
+1 N
+
+N i1 =1
+
+p(xi1x2)
+
+(7)
+
+Estimation of V PL exiting radiance field L(x2  x1) Once the density of the V PLs has been estimated, their outgoing radiance field must be computed. We can do a rough but common approximation by considering the surface of the V PLs diffuse and their outgoing radiance field constant for all projected solid angles. Otherwise, representing the outgoing radiance field would be much more difficult since it may vary along the hemisphere according to the incoming radiance. To perform the radiance field estimation, we implemented a bidirectional technique similar to those described in [KK04]. Thus, several paths are first traced from a reverse V PL. Then, several standard V PLs are used instead of light paths. Shadow rays are finally cast between the reverse V PL paths and the standard V PLs to evaluate the energy transfered from the physical light sources to the reverse V PL.
+Once the density and the outgoing radiance field of the generated V PLs have been estimated, we can use them to
+
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+¤¦§¤¦¨  ¡¢£¤¥ ¤¦
+
+ ©  ©
+
+often useless since the most expensive step is the generation of paths. Conversely, IR is a two-pass algorithm with an integration pass generally much more expensive than the propagation one. Therefore, a sampling / resampling method can be quite suitable to generate the V PLs.
+
+
+(a) (b)
+Figure 1: (a) Standard IR. (b) Reverse IR. Green points x1 (Mc) are points visible from the camera. Magenta points x2 (Ms) are points visible from Mc and the only possible V PL locations for the given point of view. Sampling length 2 paths gives Ms. Connecting Ms to the light sources gives the outgoing radiance field of the sampled V PLs.
+evaluate the measurement equation (6). Hence, we provide a simple sampling strategy to find V PLs proportionally to the importance brought by the camera.
+
+(a) (b)
+Figure 2: (a) Here, Reverse IR is more efficient to find relevant V PLs. The scene is indirectly lit and the relevant paths are difficult to find from the lights. (b) Standard IR is more efficient. A light source directly illuminates a very small area of the scene. Finding it from the camera is difficult.
+
+3.2. Bidirectional Instant Radiosity
+With path tracing algorithms, the major problem is to find relevant paths. With Metropolis Light Transport [VG97], the ideal random variable with a density proportional to the integrand is directly found by a Metropolis sampling. The integration is finally performed thanks to the useful ergodic properties of the generated Markov chain. Unfortunately, with Instant Radiosity methods, generating an ideal random variable per pixel seems difficult since a part of the paths is already fixed by the V PLs. An easy way to do it would be to have a set of V PLs for each pixel. Unfortunately, all the nice algorithmic properties of the method and its efficiency would be lost.
+That is why we propose another sampling strategy. Its goal is to generate a V PL family such as the power brought to the camera by each of them is constant. In other words, we want to sample a random variable with a density proportional to the power brought to the camera. In the case where the integrand is the responsivity of the camera to the incoming radiance (i.e., a camera with one pixel), it is the best sampling strategy.
+Standard and Reverse IR sampling methods can now provide the location of V PLs. As shown in Figure 2, Standard IR is not always better or worse than Reverse IR. According to the radiance field in the scene and the point of view, a method has to be preferred to the other. Therefore, we have to find an efficient way to combine the two sampling strategies.
+We propose a Monte-Carlo sampling / resampling approach. In path tracing methods, sampling / resampling is
+
+First, a set VN of N/2 standard V PLs and N/2 reverse V PLs is generated. For each of them, we evaluate the power brought to the camera (more exactly the camera response to the incident radiance field created by the V PLs). Then, the associated cumulative distribution function (CDF) is built. To estimate the power brought by every V PL, M length 2 paths are cast from the camera to the V PL and the energy transfered along these paths is evaluated and accumulated to build each element of the CDF. Then, we use the CDF to resample VN and to determine a relevant subset VN (N  N). The densities of the resampled V PLs are finally subsequently modified by multiplying their density by their weights in the CDF and their energy by the number of times they have been chosen.
+This method does not call for important storage capacity and remains very simple to implement since it does not require any extra sophisticated structures or non-parametric estimations. It can be noticed that a sampling / resampling strategy has been recently used by Talbot et al. [TCE05] to efficiently sample BRDFs and direct lighting.
+4. Implementation
+The implementation we propose must deal with sampling and performance issues. Two distinct passes are made. The first one generates V PLs while the other one performs the final integration.
+4.1. Handling Many Light Sources
+Before generating V PLs, the problem of sampling many light sources must be solved. Several papers made attempts
+
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+to deal with this problem. As Dietrich et al. did [DWBS03], we build a cumulative density function (CDF) depending on the light source contributions. Paths are first traced from the camera and the contribution of every light source is computed along them. Then, the CDF is built and used to choose without bias which light sources must start a light path. This method can simply discard (or likely discard) the sources which barely light the areas seen by the camera.
+
+4.2. V PL Sampling
+
+The V PL sampling pass is done with a raytracer. To achieve efficient raytracing with a log(n) complexity, a kd-tree is classically built (with a O(n log n) complexity). However, even if our raytracer is carefully written in C and many of the useful heuristics proposed by Havran in his PhD Thesis [Hav00] were used, we do not use any low-level optimization for our implementation.
+
+We may notice three important numerical issues during the propagation pass described at Section 3.
+
+· The first important issue is the power estimation done for
+
+each V PL. M sample paths are generated from the cam-
+
+era. The power brought by each V PL is then estimated
+
+using these paths. To prevent a rough estimation from dis-
+
+carding lights with a small contribution, a small uniform
+
+quantity is added to each element of the CDF (see Figure
+
+3). We may notice that doing this keeps the estimator per-
+
+fectly unbiased since no element of the CDF which can
+
+bring some power to the camera is nil. However, the re-
+
+sampled V PL density is no more proportional to the power
+
+they bring to the camera (but it remains close to it). During
+
+all our tests, M = 10 provided satisfactory results and did
+
+not significantly decrease the performance with our GPU
+
+integrator.
+
+· The second numerical issue is to estimate the density of
+
+probability of every V PL sampled from the camera (see
+
+equation (7)). Once again, M sample camera paths are
+
+used to perform the estimation. If M is too small, the final
+
+result can be biased. If it is too big, the estimation be-
+
+comes too expensive. M = 50 provided good results with-
+
+out noticeable bias. To speed up the computations, we also
+
+use a very simple trick. When the power brought to the
+
+camera by a reverse V PL is evaluated, only 5 samples are
+
+taken into account. Then, the precise density estimation
+
+with 50 camera samples is only done for the V PLs which
+
+are resampled. Doing so, the quality of the power esti-
+
+mation is a bit degraded but the resampling rate can be
+
+much larger for the same computation time. In our tests,
+
+generating more V PLs always provides more satisfactory
+
+results than performing a precise power estimation with
+
+fewer V PLs.
+
+· The last numerical issue is the resampling rate. As the
+
+best
+
+sampling
+
+method
+
+is
+
+not
+
+known,
+
+N 2
+
+reverse
+
+V PLs
+
+and
+
+N 2
+
+standard V PLs are first sampled. Then, N
+
+are resam-
+
+pled and kept. We produced several tests to estimate an
+
+(a) (b)
+
+(c) (d)
+Figure 3: (a) shows direct lighting for the 10th Shirley's test scene. (b) is a zoom on a small part of the screen computed by Radiance. (c) The same zoom done with a too rough CDF and our GPU integrator. Power brought by remote V PLs is underestimated. (d) A small quantity is added to all the elements of the CDF. The estimator is now unbiased.
+
+efficient
+
+value
+
+for
+
+r
+
+=
+
+N N
+
+.
+
+If
+
+r
+
+is
+
+too
+
+large,
+
+two
+
+many
+
+sources are sampled / resampled and the propagation pass
+
+becomes too expensive. If it is too small, the integration
+
+domain is not sufficiently explored and the convergence
+
+will be slow. On most of the scenes, r = 10 produces very
+
+satisfactory results. With our GPU integrator, the propaga-
+
+tion pass remains cheap compared to the integration one.
+
+Nevertheless, the value of r can be more accurately tuned
+
+depending on the respective performances of the propaga-
+
+tion and the integration algorithms. It can be noted that it
+
+is not necessary to store all V PLs which will be resampled
+
+if the sampling / resampling is done incrementally several
+
+times. Therefore, Bidirectional Instant Radiosity does not
+
+require important storage.
+
+4.3. GPU Final Integration
+To perform the final integration pass, we set up a simple GPU integrator. Indeed, major improvements in graphics hardware have been recently achieved. A commodity GPU now offers programming capabilities, very high fillrate and large memory bandwidth. Therefore, new rendering algorithms are now available and competitive. Deferred shading [ST90] suggests to store all geometric information in buffers and to reuse them to perform all lighting computations. As we want to accumulate many V PL contributions, we choose a deferred shading approach. It prevents the
+
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity geometry from being rasterized many times.
+
+G-buffer Creation: The normal, the position and color of each pixel are stored in a G-buffer. To build it, three float buffers are first created. They respectively contain positions, normals and colors. Material information such as material identifiers is also packed in the remaining components. For bandwidth reasons, precision is limited to 16 bits and therefore, the scene is bounded. It may be noticed that the G-buffer does not have to be recomputed if the point of view remains still. It is therefore well adapted to progressive rendering.
+
+(a)
+
+(b)
+
+Shadow Map Computation: To perform all visibility requests, a shadow map is computed for each V PL. With the approximation that V PLs lie on diffuse surfaces, they can be considered as uniform hemispherical sources. To compute the visibility requests due to a hemispherical light source, the five shadow maps of the hemicube are unrolled in a standard 2D shadow map and reindexed with a small cube map. The method is described in [KN04]. Due to shadow map aliasing issues, it can be noticed that the GPU implementation is not unbiased. Nevertheless, with high resolution shadow maps and the interior scenes we tested, aliasing is most of the time not noticeable for hemispherical shadow light sources. For exterior scenes and the illumination due to a sky, the parallel projections can be easily reparameterized to avoid aliasing (see for example [SD02] [WSP04]).
+Shadowing Operations: Once the shadow map is computed, all the V PL contributions are accumulated using the standard technique of ping-pong buffers. Two buffers are simply created and used. During a computation pass, one buffer is written while the other one is read to fetch and accumulate the previous contributions. Their respective roles are then sequentially switched.
+5. Results
+We now present the results obtained with the Bidirectional IR sampling technique and the GPU implementation presented in Section 4.3. Furthermore, we will compare our method to the closest related work.
+
+(c) (d)
+Figure 4: The "U" office. (a) shows the V PLs sampled with Standard IR sampling. (c) is the resulting picture. No V PL illuminates the areas seen by the camera. The picture is black (b) shows the V PLs sampled with Reverse IR sampling. (d) the resulting raytraced picture with only 200 V PLs and no resampling.
+
+standard IR V PLs Reverse IR V PLs
+
+Conference Cruiser U-Office
+Q3tourney1
+
+8.7 % 6.2 % 0% 2.1 %
+
+1.3 % 3.8 % 10 % 7.9 %
+
+Table 1: Percentage of resampled VPLs The resampling rate is equal to 1:10. According to the scene and the point of view, one method or the other provides the more relevant V PLs. For the conference room scene, most resampled V PLs are standard V PLs. For U-Office, the Reverse IR strategy is more efficient.
+
+5.1. Reverse and Standard IR
+To illustrate the behavior of the sampling strategies, a "U" office only indirectly lit by another room through a small corridor was designed (see Figure 4). For this kind of scenes, Reverse IR is more efficient since finding the V PLs from the lights is quite difficult. Figure 4 presents some results obtained with the two approaches without resampling. A second office, indirectly lit by a halogen lamp was also built. It is a scene where Standard IR sampling is better than Reverse IR (see Figure 6b).
+
+Therefore, depending on the scene, one of the method can be better than the other. To handle all kind of scenes, the two sampling strategies are combined. Table 1 gives the percentage of standard and reverse V PLs kept after resampling. It gives a good idea of the quality of the generated samples for the given point of view. Hence, for U-office and the point of view given at Figure 4, 100 % of the resampled V PLs were reverse V PLs. Conversely, on the conference room mainly directly lit by many small light sources, Standard IR provides much better light sources than Reverse IR does.
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+Shadow G-Buffer Shading ray/s fps Map
+
+Office Theater
+Conf Cruiser
+
+2.2 ms 4 ms 8 ms 15 ms
+
+8.3 ms 9.2 ms 12.2 ms 31 ms
+
+5.1 ms 5.1 ms 5.1 ms 5.1 ms
+
+1000K 900K 800K 500K
+
+15 6 4.5 2.2
+
+Table 2: Performance of our implementation The given times for the GPU passes are obtained with 512 × 512 × 4 unrolled hemicube shadow maps and a 1024 × 1024 screen resolution. Frames per second given in the Table are obtained with 30 V PLs / frame. The GPU is an Nvidia GeForce 6800 GT and the CPU an AMD Athlon 2400+.
+
+5.2. Sampling / Resampling Performances
+To handle all visibility difficulties, the V PLs are resampled. Figure 5 gives an image of the "U" office obtained by combining and resampling the two estimators. 1250 V PLs are created with Standard IR sampling strategies and 1250 other ones are generated with Reverse IR technique. Then, all of them are resampled with a resampling rate r equal to 1:10.
+
+interactive frame rate is thus obtained with few V PLs for scenes with variable complexities (Office contains 35 000 triangles whereas Cruiser contains one million of triangles). Compared to coherent raytracing approaches [WBWS01], our implementation suffers from the linear algorithmic complexity of shadow map computations. Nevertheless, with a commodity GPU and a simple frustum culling on kd-tree leaves, interactive global illumination can be easily performed. Several pictures with the scenes we tested are presented at Figure 7.
+We now analyze the impact of Bidirectional Instant Radiosity on the frame rate in comparison with Standard Instant Radiosity. For a 1:10 resampling rate, each V PL requires about 10 rays (by using 5 rays for the power estimation, 5 rays for the fast reverse estimation of the V PL density of probability and 50 rays for the precise density estimation). With the standard Instant Radiosity method and a mean albedo equal to 0.5, one V PL requires about 1 ray. Therefore, our sampling strategy is ten times slower than Instant Radiosity. However, even with 1000 V PLs per frame and 100 frame per second, an optimized raytracer can almost provide ten million rays as required by our method. Furthermore, V PLs can be reused from one frame to the next one. Therefore, Bidirectional IR makes Instant Radiosity suited for a wider variety of cases without sacrificing much of its fine properties (fast sampling strategies and integration).
+
+(a) (b)
+Figure 5: Sampling / resampling creates a distribution proportional to the power brought to the camera. (a) shows the V PLs distribution. (b) gives the raytraced image obtained with only 250 V PLs.
+Sampling / resampling gives satisfactory results in all the tested cases. Figure 6 presents other images computed with V PLs obtained using the sampling strategies described in Section 3. Scene q3tourney1 is particularly awkward. Light must bounce at least three times before reaching the central room through a small corridor.
+5.3. GPU and Overall Performance
+We now analyze the performance of our GPU integrator. The goal is to present the performance impact of our method compared to Standard Instant Radiosity and other techniques dealing with importance and bidirectional sampling. We just want to show that Bidirectional Instant Radiosity remains suitable for interactive rendering. Table 2 sums up the performances of our raytracer and the different GPU passes. An
+c The Eurographics Association 2006.
+
+5.4. Comparison with Importance-Driven Techniques
+Another way to extend Instant Radiosity would be to use the importance-driven photon sampling strategy designed by [PP98]. With this technique, light sources and shooting directions are chosen by estimating the importance brought by the camera. Therefore, it would be easy to sample V PLs proportionally to the power they brought to the camera. Unfortunately, this method does not seem suitable for interactive or real time rendering. First, large scenes can require a large number of importons (more than 20000). Secondly, choosing a new shooting direction is very expensive since it requires the construction of a hemispherical CDF.
+Keller's and Wald's method [KW00] is faster since no CDF is computed every time a new direction is chosen. The importance estimation is only used to determine if a photon is stored or not. Nevertheless, lots of importons have to be stored and the technique does not provide a new direction sampling strategy as Peter's technique does. The method was nevertheless tested with fast estimations with a regular grid. The quality of the resulted images was equivalent to Standard IR + sampling / resampling but provides much less satisfactory results than Bidirectional IR. This can be explained by the completely new sampling strategy brought by Reverse IR. The difference was particularly noticeable for the U-office scene where a large number of particles must be generated from the light sources before finding relevant V PLs.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+Therefore, even if standard importance-driven techniques provide very good results for off-line rendering, Bidirectional Instant Radiosity outperforms them when relevant V PLs have to be found with the constraint of interactivity.
+6. Conclusion and Future Work
+We presented in this paper new sampling strategies to handle difficult scenes for global illumination. Our method extends Instant Radiosity and proposes a bidirectional sampler to find relevant V PLs for a given point of view in a fast and efficient way. Using GPUs and a simple and brute force implementation, we already perform interactive rendering with not-too-shiny materials and all kinds of visibility layouts. Future work will first be focused on a more efficient GPU implementation. Using all recent features of today graphics hardware, we believe that real time global illumination on one computer could be achieved today. For example, it would be very interesting to perform interleaved sampling on today's graphics hardware. Other sampling strategies could also be explored as a Metropolis V PL sampling. The idea would be to build an ergodic homogeneous Markov Chain of V PLs with an invariant law proportional to the power brought to the camera. Furthermore, Bidirectional Instant Radiosity could certainly be extended to handle coherent caustics generation and reflections in all kinds of visibility layouts.
+7. Acknowledgments
+We would like to thank the anonymous reviewers for their very valuable comments and pointing out the missing references. All models except q3tourney1 are courtesy of Greg Ward and can be found on the RADIANCE web site. Q3tourney1 is courtesy of ID Software.
+References
+[Chr03] CHRISTENSEN P. H.: Adjoints and importance in rendering: An overview. IEEE Transactions on Visualization and Computer Graphics (TVCG) 9, 3 (2003), 329­ 340.
+[DLW93] DUTRE P., LAFORTUNE E. P., WILLEMS Y. D.: Monte carlo light tracing with direct computation of pixel intensities. In Compugraphics '93 (Proceedings of Third International Conference on Computational Graphics and Visualization Techniques) (1993), pp. 128­ 137.
+[DWBS03] DIETRICH A., WALD I., BENTHIN C., SLUSALLEK P.: The openrt application programming interface ­ towards a common api for interactive ray tracing. In Proceedings of the OpenSG Symposium (2003), pp. 23­31.
+[Hav00] HAVRAN V.: Heuristic Ray Shooting Algorithms. Ph.d. thesis, Czech Technical University (Prague), 2000.
+
+[Jen01] JENSEN H. W.: Realistic image synthesis using photon mapping. A. K. Peters, Ltd., 2001.
+[Kaj86] KAJIYA J. T.: The rendering equation. In SIGGRAPH '86 (Proceedings of the 13th annual conference on Computer graphics and interactive techniques) (1986), pp. 143­150.
+[Kel97] KELLER A.: Instant radiosity. In SIGGRAPH '97 (Proceedings of the 24th annual conference on Computer graphics and interactive techniques) (1997), pp. 49­56.
+[KK04] KOLLIG T., KELLER A.: Illumination in the presence of weak singularities. Monte Carlo and Quasi-Monte Carlo Methods (2004).
+[KN04] KING G., NEWHALL W.: Efficient omnidirectional shadow maps. In ShaderX3 (2004), Charles River Media.
+[KW00] KELLER A., WALD I.: Efficient importance sampling techniques for the photon map. In Proceedings of Vision Modelling and Visualization (2000), pp. 271­279.
+[LW93] LAFORTUNE E. P., WILLEMS Y. D.: Bidirectional path tracing. In Compugraphics '93 (Proceedings of Third International Conference on Computational Graphics and Visualization Techniques) (1993), pp. 145­ 153.
+[PP98] PETER I., PIETREK G.: Importance driven construction of photon maps. In Rendering Techniques '98 (Proceedings of the Eurographics Workshop on Rendering) (1998), pp. 269­280.
+[SD02] STAMMINGER M., DRETTAKIS G.: Perspective shadow maps. In SIGGRAPH '02 (Proceedings of the 29th annual conference on Computer graphics and interactive techniques) (2002), pp. 557­562.
+[ST90] SAITO T., TAKAHASHI T.: Comprehensible rendering of 3-d shapes. In SIGGRAPH '90 (Proceedings of the 17th annual conference on Computer graphics and interactive techniques) (1990), pp. 197­206.
+[SW00] SUYKENS F., WILLEMS Y. D.: Density control for photon maps. In Rendering Techniques 2000 (Proceedings of the Eleventh Eurographics Workshop on Rendering) (2000), pp. 23­34.
+[TCE05] TALBOT J. F., CLINE D., EGBERT P. K.: Importance resampling for global illumination. In Rendering Techniques 2005 (Proceedings of the Eurographics Symposium on Rendering) (2005), pp. 139­146.
+[Vea97] VEACH E.: Robust Monte Carlo Methods for Light Transport Simulation. Phd thesis, Standford Univeristy, 1997.
+[VG94] VEACH E., GUIBAS L.: Bidirectional estimators for light transport. In Proceedings of Eurographics Rendering Workshop (1994), pp. 147­162.
+[VG97] VEACH E., GUIBAS L.: Metropolis light transport. SIGGRAPH '97 (Proceedings of the 24th annual
+
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity conference on Computer graphics and interactive techniques) (1997), 65­76. [WBWS01] WALD I., BENTHIN C., WAGNER M., SLUSALLEK P.: Interactive rendering with coherent ray tracing. Computer Graphics Forum (Proceedings of Eurographics 2001) 20, 3 (2001). [Whi80] WHITTED T.: An improved illumination model for shaded display. Commun. ACM 23, 6 (1980), 343­ 349. [WKB02] WALD I., KOLLIG T., BENTHIN C., KELLER A., SLUSALLEK P.: Interactive global illumination using fast ray tracing. In Rendering Techniques 2002 (Proceedings of the 13th Eurographics Workshop on Rendering) (2002). [WSP04] WIMMER M., SCHERZER D., PURGATHOFER W.: Light space perspective shadow maps. In Rendering Techniques 2004 (Proceedings of the Eurographics Symposium on Rendering) (2004).
+c The Eurographics Association 2006.
+
+B. Segovia, J. C. Iehl, R. Mitanchey & B. Péroche / Bidirectional Instant Radiosity
+
+(a) (b) (c)
+Figure 6: Sampling Performances. Several pictures computed with the sampling techniques described in the article. Bidirectional sampling finds the relevant V PLs no matter the visibility layout. (a) A part of q3tourney1 (courtesy of ID software) indirectly lit trough a small corridor. Lights make at least 3 bounces before coming into the room. Most of the V PL are found with reverse IR strategy. (b) A simple office indirectly lit by a halogen lamp easily handled with Standard Instant Radiosity. (c) The U Office (raytraced). The scene is completely indirectly lit through a small corridor. Bidirectional IR quickly finds the relevant V PLs.
+
+(a) 2.4 s / 15 f/s
+
+(b) 2.8 s / 6 f/s
+
+(c) 3.8 s / 4.5 f/s
+
+(d.1) 5.9 s / 2.2 f/s
+
+(d.2) 4.6 s / 2.2 f/s
+
+Figure 7: Overall performances with a GPU deferred shading engine. With the Bidirectional Instant Radiosity sampling strategy, convergence is obtained in a few seconds for very different scenes. Convergence times are obtained with less than 1% RMS error. Frame rates are obtained with 30 V PLs per second. The screen resolution is equal to 1280 × 1024. The graphics card is a NVidia GeForce 6800 GT. (a) An office with a very bright lamp. 35 000 triangles are rendered. (b) Candlestick Theater with 100 000 triangles. (c) The conference room. 200 000 triangles are rendered. (d) Two different views of Cruiser. One million triangles are displayed.
+
+c The Eurographics Association 2006.
+
+

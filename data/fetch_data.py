@@ -30,12 +30,12 @@ def fetchResultsForCategory(category):
 	))
 
     return results
-    #return [('bad article', '1234', 'http://www.aaai.org/Papers/Symposia/Fall/1994/FS-94-02/FS94-02-034.pdf', 34)]
+    #return [('bad article', '1234', 'http://alice.loria.fr/OLD/publications/papers/2005/VTM/vtm.pdf', 34)]
 
-def fetchPdf(url, cid):
+def fetchPdf(url, citations, cid):
     try:
 	curl.setopt(curl.URL, url)
-	with open(STORAGE_DIR + cid + '.pdf', 'w') as f:
+	with open(STORAGE_DIR + str(citations) + '_' + cid + '.pdf', 'w') as f:
 	    curl.setopt(curl.WRITEFUNCTION, f.write)
 	    curl.perform()
 	return True
@@ -43,19 +43,19 @@ def fetchPdf(url, cid):
 	return False
 
 def wc(filename):
-    return int(check_output(["wc", "-l", filename]).split()[0])
+    return int(check_output(["wc", "-w", filename]).split()[0])
 
 def processPdf(citations, cid):
-    pdffilename = STORAGE_DIR + cid + '.pdf'
+    pdffilename = STORAGE_DIR + str(citations) + '_' + cid + '.pdf'
     txtfilename = STORAGE_DIR + str(citations) + '_' + cid + '.txt'
-    err = call(['python', 'pdfminer/tools/pdf2txt.py', '-o', txtfilename, pdffilename], stderr=DEVNULL)
+    err = call(['pdftotext', pdffilename])
     os.remove(pdffilename)
     if err != 0:
-	print 'Error with pdfminer'
-	os.remove(txtfilename)
+	print 'Error with pdftotext'
 	return False
-    if wc(txtfilename) < MIN_WORDS:
-	print 'Not enough words, removing ' + txtfilename
+    words = wc(txtfilename)
+    if words < MIN_WORDS:
+	print 'Not enough words, only ' + str(words) + ' removing ' + txtfilename
 	os.remove(txtfilename)
 	return False
     return True
@@ -63,35 +63,6 @@ def processPdf(citations, cid):
 
 if __name__ == "__main__":
     categories = [
-	'raster images',
-	'computer typography',
-	'vector images',
-	'computer animation',
-	'3D computer models',
-	'2D computer models',
-	'computer generated imagery',
-	'low bandwith computer generated images',
-	'real time rendering',
-	'keyframe animation',
-	'pixel grids',
-	'rendering pipeline',
-	'shader pipeline',
-	'computer caustics lighting',
-	'ray tracing',
-	'scanline rendering',
-	'shading pipeline',
-	'catmull spline',
-	'procedural textures',
-	'bitmap textures',
-	'bump mapping',
-	'texture mapping',
-	'anti-aliasing',
-	'volume rendering',
-	'charles csuri',
-	'donal greenberg',
-	'aaron marcus',
-	'michael noll',
-	'utah teapot',
 	'radiosity global illumination',
 	'monte carlo rendering',
 	'blinn-phong shading',
@@ -116,7 +87,7 @@ if __name__ == "__main__":
 	for title, cid, url, num_citations in results:
 	    if cid in used_cids: continue
 	    if url is None: continue
-	    success = fetchPdf(url, cid)
+	    success = fetchPdf(url, num_citations, cid)
 	    if success:
 		success = processPdf(num_citations, cid)
 	    if success:

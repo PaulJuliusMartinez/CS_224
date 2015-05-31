@@ -1,0 +1,1247 @@
+Graphics Hardware (2007)
+Timo Aila and Mark Segal (Editors)
+
+Programmable Shaders for Deformation Rendering
+
+Carlos D. Correa and Deborah Silver
+
+Rutgers, The State University of New Jersey
+
+Figure 1: Example cuts and deformations on geometric models. From left to right: (a) Armadillo with bending deformation
+(172K triangles) (b) Torso (25,528 triangles) with peeled skin and interior Mask model (10,213 triangles) (c) Horse with twist
+deformation (97K triangles)
+
+Abstract
+In this paper, we present a method for rendering deformations as part of the programmable shader pipeline of
+contemporary Graphical Processing Units. In our method, we allow general deformations including cuts. Previ-
+ous approaches to deformation place the role of the GPU as a general purpose processor for computing vertex
+displacement. With the advent of vertex texture fetch in current GPUs, a number of approaches have been proposed
+to integrate deformation into the rendering pipeline. However, the rendering of cuts cannot be easily programmed
+into a vertex shader, due to the inability to change the topology of the mesh. Furthermore, rendering smooth de-
+formed surfaces requires a (cid:2)ne tessellation of the mesh, in order to prevent self-intersection and meshing artifacts
+for large deformations. In our approach, we overcome these problems by considering deformation as a part of the
+pixel shader, where transformation is performed on a per-pixel basis. We demonstrate how this approach can be
+ef(cid:2)ciently implemented using contemporary graphics hardware to obtain high-quality rendering of deformation at
+interactive rates.
+Categories and Subject Descriptors (according to ACM CCS): I.3.5 [Computer Graphics]: Computational Geometry
+and Object ModelingGeometric Transformations; I.3.6 [Computer Graphics]: Methodology and TechniquesInter-
+action techniques;
+
+only been supported in the latest GPUs, and have limited
+(cid:2)ltering modes. However, pixel texture fetch is still con-
+siderably faster, and provides support for multiple (cid:2)ltering
+modes, such as bi-linear, tri-linear and anisotropic. Second,
+deformation on image-space, as opposed to object space,
+provides smoother results, as it is not limited by the reso-
+lution of the mesh. In our approach, we deform the object
+as part of the rendering pipeline. This is different from other
+traditional deformation methods, where deformation is con-
+sidered as a modeling problem and a new mesh is required.
+
+1. Introduction
+
+In this paper, we present a novel rendering methodology
+which produces high-quality deformations including cuts
+and twists, using programmable graphics hardware. Un-
+like previous approaches to hardware-assisted deformation,
+which place the deformation at the vertex shader, we place
+deformation in the pixel shader. This has certain advantages
+over per-vertex deformation. First, generic deformations can
+be de(cid:2)ned in deformation textures, which sample 3D dis-
+placements in a 2D or 3D texture. Vertex texture fetch has
+
+Copyright c(cid:13) 2007 by the Association for Computing Machinery, Inc.
+Permission to make digital or hard copies of part or all of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for commercial advantage and that copies bear this notice and the full citation on the
+(cid:2)rst page. Copyrights for components of this work owned by others than ACM must be
+honored. Abstracting with credit is permitted. To copy otherwise, to republish, to post
+on servers, or to redistribute to lists, requires prior speci(cid:2)c permission and/or a fee. Re-
+quest permissions from Permissions Dept, ACM Inc., fax +1 (212) 869-0481 or e-mail
+permissions@acm.org.
+GH 2007, San Diego, California, August 04 - 05, 2007
+c(cid:13) 2007 ACM 978-1-59593-625-7/07/0008 $ 5.00
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+Deformation as a rendering process does not produce a re-
+sulting mesh, but generates images of a deformed object in
+real-time and with very high quality. This has a wide number
+of applications in real-time illustration, animation, gaming
+and generation of special effects.
+
+In this paper, we propose a generalized notion of defor-
+mation shaders, where we exploit the programmability of
+graphics hardware to render all kinds of deformations, in-
+cluding cuts and breaks. These are more dif(cid:2)cult to model
+using vertex processing, as topology changes are required
+(i.e., remeshing). However, we show that these can be real-
+ized in a pixel shader, by considering a special kind of de-
+formation textures which encode discontinuity information.
+Because we realize deformation as a pixel shader, it is con-
+sidered as an inverse space warping problem rather than a
+vertex transformation problem. As a general approach, we
+use raycasting to (cid:2)nd intersections of viewing rays with the
+deformed surface. This paradigm was introduced earlier for
+raytracing of deformed objects [Bar86], and we show how it
+can be ef(cid:2)ciently implemented using programmable graph-
+ics hardware. Further, we solve a number of additional chal-
+lenges when incorporating cuts.
+
+2. Related Work
+Deformations have been widely used in computer graphics
+to generate a number of effects, and they have applications
+in animation, shape modeling and simulation. The literature
+in deformation is extensive, for which there are a number of
+surveys [NMK(cid:3)05,BS07]. Mesh cutting is another aspect of
+deformation, where the mesh topology is modi(cid:2)ed to simu-
+late breaks and incisions [BSM(cid:3)02]. Work closely related to
+this paper are GPU-based deformation techniques and ren-
+dering of implicit surfaces.
+GPU Accelerated Mesh Deformation. Most deformation
+approaches transform the vertices of a mesh directly, via
+procedural transformations [Bar84], via a proxy geometry
+[SP86], or via a physically-based simulation [NMK(cid:3)05]. Re-
+cently, physically-based deformation approaches have used
+graphics hardware for solving partial differential equations
+required for mass-spring or (cid:2)nite element models [KW03,
+GWL(cid:3)03]. In this case, rendering is seen as a different stage
+to the deformation process. This approach has been ex-
+tended to the rendering of cuts, especially for surgery simu-
+lation [MS05]. Others have applied deformation during the
+rendering process, in a vertex shader. The deformation is
+procedurally de(cid:2)ned [d’E04], de(cid:2)ned as a deformation tex-
+ture [JP02] or a displacement map [SKE05], or as a com-
+bination of basis functions [MBK06]. The ability to de(cid:2)ne
+deformations as textures is possible thanks to vertex-texture
+capabilities of recent GPU’s. A problem with vertex-shader-
+based deformation is the reliance on a smooth tessellation of
+the input mesh for high-quality rendering and the dif(cid:2)culty
+to model topology changes, required for cuts. As an alter-
+native, deformation can be done in a pixel shader. Trans-
+
+forming the shape of an object in image space has been suc-
+cessfully implemented for displacement mapping. Displace-
+ment mapping [Coo84] allows the rendering of geometric
+detail on a base surface. Recent methods use GPU-based
+ray casting [OBM00, HEGD04, WTL(cid:3)04, PO06]. However,
+many of these techniques do not extend easily to general de-
+formation or to large cuts, because the displacement map
+is usually independent from the input geometry and be-
+cause it is assumed to be contained within a small volume
+(shell) surrounding the surface. A displacement was pro-
+posed in [CSC06b, CSC06a], where a volumetric object is
+deformed and cut at interactive rates. Because the volume is
+represented as a stack of view-aligned slices, this approach
+is prone to aliasing and undersampling. In this paper, we
+generalize the notion of displacement map for deformation,
+including the ability to render cuts in polygonal models in
+an ef(cid:2)cient manner, without the requirement of explicitly
+changing the topology of the mesh.
+Implicit Representations. Implicit surfaces have been used
+widely in computer graphics as an object representation,
+with applications in modeling, deformation and animation
+[Blo97]. One of the challenges with implicit deformations
+is (cid:2)nding intersections ef(cid:2)ciently for interactive rendering
+or accelerated ray tracing. A number of approaches were
+proposed very early [Har96, KB89, SP91], for both unde-
+formed and deformed implicit surfaces. Recently, Hadwiger
+et al. [HSS(cid:3)05] showed how these methods can be extended
+to the rendering of arbitrary meshes using the distance (cid:2)eld
+as an implicit representation. In this paper, we exploit the
+programmability of pixel shaders to represent mesh defor-
+mation as a rendering of a deformed distance (cid:2)eld. Unlike
+previous approaches, our method can be extended to the ren-
+dering of cuts, which may introduce sharp corners, dif(cid:2)cult
+to render accurately via raycasting. We show how ef(cid:2)cient
+ray casting algorithms can be developed for artifacts-free
+rendering of deformation-cuts.
+
+3. Overview
+Our pipeline for deformation is based on the raytracing of
+implicit deformable surfaces. Because of the exactness of
+representation, we choose signed distance (cid:2)elds as a repre-
+sentation. Later, in Section 6.1, we show how this require-
+ment can be adjusted to improve GPU memory ef(cid:2)ciency.
+An implicit surface is de(cid:2)ned as an isosurface of a function
+f : R3 7! R. As a convention, a surface of interest S can be
+de(cid:2)ned implicitly as the set of points p such that f (p) = 0.
+Also, as a convention, f is positive inside the object and neg-
+ative outside. A deformed implicit surface S0 is de(cid:2)ned as the
+zero-set f 0(p) = 0. Let T : R3 7! R3 by a spatial transforma-
+tion, so that a point p is transformed into p0 = T (p) and its
+inverse T (cid:0)1 such that p = T (cid:0)1(p0). In this paper, we de(cid:2)ne
+T (cid:0)1 as a 3D inverse displacement, i.e., p = p0 +D(p0), with
+D : R3 7! R3, a displacement (cid:2)eld. The deformed implicit
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+surface can be found as the set of points p0 such that :
+
+f 0(p0) = f (T (cid:0)1(p0)) = f (p0 +D(p0)) = 0
+
+(1)
+
+Since we intend to apply this method to surfaces de(cid:2)ned
+as meshes, our rendering pipeline requires a stage where a
+signed distance (cid:2)eld is obtained from the mesh. However,
+we do not require a signed distance (cid:2)eld for the entire mesh,
+but rather only the subset of the surface which is to be de-
+formed. Thanks to a number of GPU-based techniques for
+the generation of distance (cid:2)elds [SPG03, SGGM06], it can
+be done interactively.
+
+First, the user selects a region where deformation is to
+be applied using a bounding box. Let SD (cid:18) S be the part
+of the surface contained in that region, which is to be de-
+formed. The user selects a 3D displacement texture from a
+pool of pre-de(cid:2)ned deformations, and applies it to the sur-
+face, much in the way color or displacement textures are
+applied in current graphics pipelines. Because we know the
+maximum attainable displacement for a given deformation
+texture, we can bound the space occupied by the deformed
+surface within a bounding box B(S0D), where S0D is the de-
+formed surface. Then, the rendering can be done in two
+stages. First, we render the undeformed part of the object us-
+ing traditional shaders, enabling depth culling of the region
+de(cid:2)ned by B(S0D), so that the deformed region is not ren-
+dered twice. In the second stage, we render the bounding box
+B(S0D) using a deformation shader. The deformation shader
+is a shader program that enables the rendering of deformed
+implicit surfaces in image space rather than object space. Fi-
+nally, once both are rendered, we blend the color near the
+seams so that both parts (the one using an explicit surface
+and the one using an implicit surface), are integrated with-
+out artifacts. This is possible as long as deformation vanishes
+as it gets near the boundaries. This could be enforced in all
+boundaries of the deformation cube, but, in practice, this is
+only enforced in certain faces of the cube, depending on the
+deformation. Twisting, for instance, is constrained to be zero
+at all the faces except the top of the deformation box. This
+means that it should be placed so that the top face do not
+intersect the object.
+
+The deformation shader then consists of a ray traversal
+procedure. Each fragment generates a ray in the view direc-
+tion. For each sample point we perform the following steps,
+as shown in Fig.(2):
+1. Warping. Each sample along the ray p0 is inversely
+warped by sampling the deformation texture, and using
+the values as a 3D displacement. That is:
+p = p0 +M(D(M(cid:0)1(p0)))
+
+(2)
+where D is a displacement (cid:2)eld (stored as a deformation
+texture), and M is a coordinate transformation between
+texture space and object space.
+
+2. Sampling. The warped coordinate p is used to sample
+
+the implicit representation f .
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+1. MAPPING
+
+2. RAY CASTING
+
+3. COMPOSITION
+
+viewing
+rays
+
+S
+
+S
+D
+
+0
+
+S’
+D
+
+Bounding Box B(S ’ ) D
+
+per sample point:
+
+S’
+D
+
+S
+D
+
+p  = p’ +D(p’ )
+i
+i
+
+i
+
+p   = p’  + D(p’  )
+i+1
+i+1
+
+i+1
+
+2.1. WARPING
+
+S
+D
+
+f
+
+(p )  
+
+i
+
+f
+
+(p   )  
+
+i+1
+
+2.2. SAMPLING
+
+f
+
+(p)  = 0
+
+n(p’)
+
+2.3. FIND
+INTERSECTION
+
+2.4. LIGHTING
+
+Figure 2: Deformation of an apple. S, the original sur-
+face is rendered with a traditional shader. A 3D displace-
+ment/deformation texture is chosen and added to the object.
+0) is rendered as an implicit repre-
+The bounding box B(S0
+sentation using ray casting. The result of both shaders are
+composited together.
+3. Find Intersection. The ray traversal is stopped when-
+ever an intersection is found, as the zero-set f (p) = 0. A
+number of approaches can be applied for the determina-
+tion of a stopping criteria and ray traversal, as discussed
+in section 3.1
+
+4. Lighting. Finally, when an intersection is found, color
+and lighting attributes are obtained by estimating the nor-
+mals to the deformed surface at the intersection point.
+
+3.1. Ray traversal and Intersections
+In order to (cid:2)nd the closest intersection of a ray with the sur-
+face, this stage traverses the ray at sampling positions:
+
+p0i = p0 +tiv
+
+(3)
+for ti 2 (0;tend) and p0 the entry point of the ray v into the
+bounding box B(S0
+0). This linear search has been used for
+interactive rendering of displacement maps. For more accu-
+rate intersections, linear search is usually accompanied with
+a binary intersection re(cid:2)nement, such as in [HSS(cid:3)05], and
+an adaptive sampling mechanism. For speed up, linear and
+binary search gives good results for smooth surfaces. Sur-
+faces with narrow details, however, results in artifacts due to
+missing an intersection. In the context of deformation, there
+are two additional challenges: the introduction of large de-
+formations, and the introduction of sharp cuts, both of which
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+can introduce narrow details into the new deformed surface.
+These problems are discussed in the following sections.
+
+3.1.1. Adaptive Sampling
+One of the challenges with the rendering of implicit sur-
+faces is accurately (cid:2)nding the (cid:2)rst intersection with the sur-
+face. With linear search, regions of high spatial frequency
+might be skipped, resulting in artifacts near edges. A num-
+ber of solutions have been proposed. Previous approaches
+aiming toward ray tracing require (cid:147)guaranteed(cid:148) intersection-
+(cid:2)nding algorithms, based on Lipschitz constants [KB89].
+Hadwiger et al. use adaptive sampling based on a user-
+controlled threshold [HSS(cid:3)05]. In our paper, we are inter-
+ested in the cases where adaptive sampling is needed in the
+case of deformation. For this purpose, and without loss of
+generality, we assume that the original undeformed surface
+can be rendered robustly using one of the above techniques.
+With deformation, additional conditions must be met so that
+the deformed surface is rendered properly. For instance, a
+long narrow pull or a large twisting, may increase the re-
+quired sampling of the deformed surface. Let us de(cid:2)ne a
+ray in deformed space p0 + tv, where v is the view direc-
+tion and p0 is the ray entry point. This ray corresponds to
+a 3D curve R(s) in undeformed space. We can consider
+s = T (cid:0)1(t), for an inverse transformation T (cid:0)1, such that
+R(s) = T (cid:0)1(p0 +tv). To avoid missing intersections in the
+case of a sharp or large deformations, we ensure that samples
+in the deformed space correspond to uniform samples along
+the curve in the undeformed space. Taking the derivative of
+s with respect to t yields:
+ds
+dt = jJT (cid:0)1vj
+
+where JT (cid:0)1 is the Jacobian of the transformation T (cid:0)1. Since
+T (cid:0)1 is a displacement, JT (cid:0)1 = I + JD, where I is the iden-
+tity matrix and JD is the Jacobian of the displacement (cid:2)eld.
+Then, assuming a constant sampling distance ds, an adaptive
+sampling (which we call Jacobian sampling) is obtained as:
+
+dti =
+
+1
+
+j(I +JD(t))vj
+
+ds
+
+(4)
+
+and points along the ray direction can be found as pi+1 =
+pi + dtiv. Fig.(3) shows an example of a narrow pull on the
+golf ball model. Because adaptive sampling can be costly, we
+allow the programmer to de(cid:2)ne whether to use a threshold-
+based sampling as in [HSS(cid:3)05], Jacobian sampling or no
+adaptive sampling at all.
+
+3.2. Warping
+Warping of the sampled positions is done via inverse
+displacement using Eq.(2). Previous approaches to pro-
+grammable deformation de(cid:2)ne the warping as a hard-coded
+statement within a vertex or pixel shader. This method, how-
+ever, is dif(cid:2)cult to generalize and some deformations, such
+as peels, require a complex procedural de(cid:2)nition that may be
+
+(a)
+
+(c)
+
+(b)
+
+(d)
+
+Figure 3: (a) Narrow Pull over golf ball model (245K tri-
+angles). (b) Linear search with binary re(cid:2)nement results in
+missed intersections (c) Adaptive sampling based on thresh-
+old (thresh=0:04) cannot resolve all misses (d) Jacobian
+sampling (cid:2)nds the intersections properly.
+costly to compute. Instead, complex deformations are sam-
+pled into deformation textures. In Eq.(2), we allow the de(cid:2)-
+nition of a spatial transformation M, which represents a map-
+ping between object space and displacement space. This type
+of mapping may be used to map the deformation in cylin-
+drical coordinates, for example, to render (cid:147)round(cid:148) cuts. An-
+other use is the interactive control of the spatial extents of the
+deformation, as an af(cid:2)ne transformation A(p) + u, where A
+contains a rotation and scaling, and u) is a translation. This
+allows the user to translate and rotate the deformation tex-
+ture to simulate interactive manipulation of the deformation
+parameters, without the need to modify the deformation tex-
+ture on the (cid:3)y. For instance, translating a twist in the y di-
+rection, has the effect of increasing the strength of the twist.
+Similarly, a translation along the x direction of a peel defor-
+mation simulates the effects of progressive peeling (Fig.(4)).
+
+3.3. Lighting
+After an intersection point is found, color properties are ob-
+tained depending on the lighting parameters. For this pur-
+pose, we need to estimate the normal at that point. The nor-
+mal can be reconstructed from the gradient of f 0 on the (cid:3)y,
+or, for speed up, from a transformation applied to the original
+gradient of f . In traditional deformation, this can be encoded
+into the vertex shader by multiplying the original normal by
+the inverse transpose of the Jacobian of the forward trans-
+formation function T [Bar84]. In our approach, we require
+a transformation based on the inverse displacement. From
+vector calculus, we have that for an inverse transformation,
+T (p) = J>
+J(cid:0)>
+T (cid:0)1 (T (p)) [Dav67], where JT is the Jacobian of
+a transformation T. For T (cid:0)1(p) = p +D(p), the Jacobian is
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+of deformation textures can be used to add deformation
+(cid:147)detail(cid:148) to a deformation texture.
+
+5. Cut shader
+The above method is essentially for continuous deforma-
+tions, where the displacement function D is de(cid:2)ned every-
+where in the domain of the deformation texture. Deforma-
+tion cuts, such as incisions, create discontinuities into the
+surface, without removing material. Other cuts, such as the
+removal of parts (i.e., a CSG operation), can also be realized
+with this method. To implement a cut shader, a number of
+changes are made to the different stages of the deformation
+pipeline. First, we must encode the cut information into our
+deformation texture. Second, (cid:2)nding intersections is differ-
+ent, as the introduction of cuts implies a change in the conti-
+nuity of the surface. Further, when simulating a solid model,
+a ray may intersect the object at the interior, on a new sur-
+face that appears due to the cut. And (cid:2)nally, because a new
+surface may appear, the normal information must be adapted
+to the shape of the cut geometry as well. These cases are de-
+scribed below.
+
+The deformation texture, which contains a discrete sam-
+pling of D must be extended to contain discontinuity in-
+formation. This is achieved by creating an alpha map A(p)
+(scalar (cid:2)eld), which tells whether a point is inside or outside
+of a cut region. As a convention, we assume that a point p is
+cut, if it lies in the region A(p) > 0, or not, otherwise.
+
+5.1. Ray Intersection with Deformation Cuts
+The ray intersection process differs from the original shader
+in that a ray may not intersect the surface if it is cut, or it may
+intersect a new surface that appears at the interior of a solid
+object. The appropriate ray intersection method depends on
+whether the object is assumed to be hollow, solid, or a hollow
+thick shell. Although surfaces are modeled as thin shells, a
+deformation cut shader allows the rendering of any of these
+three types of objects, as selected by the user.
+
+5.1.1. Rendering of Hollow Surfaces
+In the simplest case, we may consider a surface as a thin
+shell. Cutting a surface reveals the empty space inside an
+object, and provides a view of the backside of parts of the
+object. In traditional deformation, cutting a surface implies a
+change in topology, which is dif(cid:2)cult to do in a vertex shader.
+However, this can be done using our pixel-based deforma-
+tion shaders, by modifying the ray intersection algorithm, as
+follows: Whenever an intersection p0 is found, a test for vis-
+ibility is performed, using the alpha map which encodes the
+shape of the cut. If A(p0) < 0, the point is not within a re-
+gion of the cut and the intersection is found. Otherwise, the
+point is discarded and the ray traversal continues until an-
+other intersection with the surface is found, or the stopping
+criteria are met. This is shown in Fig.(5a). The intersection
+
+Figure 4: Example of applying an af(cid:2)ne transformation to
+the deformation texture. Top: A progressive twisting of a (cid:2)n-
+ger is obtained by applying a translation along the y axis.
+Bottom: A translation of the deformation space (blue box)
+along the z direction results in progressive peeling. This is
+encoded in the mapping stage of the deformation shader.
+de(cid:2)ned as JT (cid:0)1 (p) = I +JD(p), where JD(p) is the Jacobian
+of the displacement and I is the identity matrix. Therefore,
+normals can be obtained as:
+
+(cid:0)!n 0(p) = normalize(cid:16)(I +JD(p))>(cid:0)!n (p +D(p))(cid:17)
+(5)
+where (cid:0)!n 0(p) is the normal to the deformed surface at point
+p and (cid:0)!n (p) is the normal to the undeformed surface at point
+p. Note that this is a different expression from the usual nor-
+mal estimation formula which has been derived from direct
+deformation. Eq.(5) applies for inverse warping.
+
+4. De(cid:2)nition of Deformation Textures
+Deformation Textures are de(cid:2)ned as a sampling of
+an inverse displacement
+in a regular grid. There are a
+number of ways of obtaining a deformation texture:
+procedurally, as the result of inverting a forward trans-
+formation, via control points, or via a simulation. In
+this paper, our deformations are obtained from a pro-
+cedure. For a twist deformation, for instance, a forward
+transformation is given by the expression: DF (x;y;z) =
+(xcosa(z) +ysina(z) (cid:0)x; (cid:0)xsina(z) +ycosa(z) (cid:0)y;0)).
+The inverse displacement is simply D = (cid:0)DF. For a bend
+deformation, the inverse transformation can also be found,
+as described in [Bar84]. Complex deformations, however,
+may be dif(cid:2)cult to de(cid:2)ne procedurally. Further, (cid:2)nding a
+close form solution to the inverse may prove dif(cid:2)cult. In
+this case, deformation can be obtained using a (cid:2)nite set
+of control points, which are deformed interactively by the
+user, and using inverse weighted interpolation in order to
+(cid:2)nd the values at grid points [RM95]. Once a deformation
+texture is created, it can be re-used into a number of surface
+models and applications, much in the way of color or
+image textures. Further, deformation textures based on
+displacements are algebraically easy to combine. Addition
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+point 1 is discarded and only 2 is used for rendering. Note
+that these intersections are on the interior or underside of the
+model. We can use the normals to render the interior in a
+different color. Because of false intersections, this approach
+may be slow. Another approach is to use the original ray
+intersection algorithm over a combined implicit representa-
+tion of the surface minus the geometry of the cut (CSG op-
+eration). However, this approach may result in intersection
+misses for sharp cuts. With the approach described above,
+however, sharp cuts can be represented without artifacts.
+
+5.1.2. Rendering of Solid Objects
+If we assume that the object is solid, rendering a cut reveals
+the interior of the solid. To render this effect, a ray may in-
+tersect a new surface that appears due to the cut. A similar
+algorithm is used, except that when an intersection with the
+object is discarded (because it is within the volume of the
+cut), it may be possible that it still intersects the cut geome-
+try. In such case, the algorithm continues traversing the ray,
+but this time it searches for intersections with the cut surface,
+which is found at points where A(p) = 0. A valid intersec-
+tion with the surface of the cut must be in the interior of the
+object, i.e., f (p) > 0. If that is not the case, the algorithm
+continues in the search of intersections. This is depicted in
+Fig.(5b). Rendering a solid object also changes the lighting
+stage, since the reconstructed normal depends on whether
+the point found intersects the surface f or the alpha map A.
+The following test computes the correct normal:
+
+(cid:0)!n 0(p) =((cid:0)!n 0f (p) p < e
+
+(cid:209)(A)
+
+otherwise
+
+(6)
+
+where (cid:0)!n 0f is the normal found using Eq.(5), and (cid:209)(A) is the
+gradient of the alpha map A.
+
+5.1.3. Rendering of Thick Shells
+Finally, another possibility is the case where we have hol-
+low objects with a (cid:147)thick skin(cid:148). In this case, there are re-
+gions where intersections with the cut surface are needed
+(the thick part of the outer shell of the object), and other re-
+gions where these are ignored . Remarkably, this can be ob-
+tained by modifying the surface representation and follow-
+ing the algorithm for solid objects. Let t > 0 be the thickness
+of the shell. Then, the new surface representation is:
+
+(cid:136)f (p) =(t (cid:0) f (p)
+
+f (p)
+
+f (p) > t
+2
+otherwise
+
+(7)
+
+The different rendering of cuts can be seen in Fig.(6). In
+traditional deformation with cuts, it is required to remesh a
+complex tetrahedral mesh to represent these different types
+of solids.
+
+6. GPU Implementation
+Our approach can be ef(cid:2)ciently implemented exploiting the
+programmability of fragment shaders. A deformation shader
+
+Original 
+
+Hollow Cut
+
+Solid Cut
+
+1
+
+(a)
+
+2
+
+1
+
+2
+
+(b)
+
+Figure 5: Ray intersection of cut surface. (a) For a hollow
+object, we compute intersections with f (p), discarding those
+inside the cut region (1), and stopping when it is outside the
+cut region (2). (b) For a solid object, we keep track of inter-
+sections with the cut region and the object (point 2).
+
+(a) Hollow
+
+(b) Thick Hollow
+
+(c) Solid
+
+Figure 6: Hollow, Thick and Solid Apple
+
+is then a realization of the different stages described in Sec-
+tion 3. To render a deformed implicit shader, we (cid:2)rst com-
+pute the distance (cid:2)eld of the partial surface SD and store it
+into a 3D texture. We use a while loop to traverse the ray
+along the view direction, and use a conditional statement
+for early termination. Current GPU’s often incur in branch
+penalties with these type of loops. We believe that branch-
+ing support of newer GPU’s will improve the performance
+of our approach. Within the loop, we warp each sample po-
+sition according to the displacement stored in a deformation
+map, and use the result to sample the implicit representation
+f , stored also as a texture. An interval for a possible intersec-
+tion is found whenever a change in sign of f occurs. Then,
+we use a binary re(cid:2)nement to narrow down the intersection
+coordinates.
+
+6.1. GPU Ef(cid:2)ciency
+In our approach, we require a distance (cid:2)eld representation
+of an object. Depending on the complexity of the mesh,
+this may be memory consuming. As an alternative, one may
+choose smaller representations, trading off the exactness of
+distance (cid:2)elds. An example is 2D depth maps. A depth or
+height map is a 2D mapping function H : R2 7! R, which
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+ 500
+
+ 400
+
+Dragon (871,414 triangles)
+
+ContinuousCuts
+
+ 500
+
+ 400
+
+)
+.
+c
+e
+s
+m
+
+i
+
+(
+ 
+e
+m
+T
+ 
+r
+e
+d
+n
+e
+R
+
+ 300
+
+ 200
+
+ 100
+
+)
+.
+c
+e
+s
+m
+
+i
+
+(
+ 
+e
+m
+T
+ 
+r
+e
+d
+n
+e
+R
+
+ 300
+
+ 200
+
+ 100
+
+Armadillo (172,974 triangles)
+
+ContinuousCuts
+
+Model
+
+Triangles
+
+Continuous
+
+hand
+bunny
+armadillo
+dragon
+
+18,905
+72,027
+172,974
+871,414
+
+89.79
+87.32
+83.89
+119.24
+
+Cuts
+(no ESK)
+225.46
+249.92
+260.18
+323.20
+
+Cuts
+(ESK)
+75.77
+114.95
+126.00
+126.5
+
+ 0
+
+ 0
+
+ 500
+
+ 400
+
+ 10
+
+ 20
+
+ 30
+
+ 40
+ 60
+Render area (%)
+
+ 50
+
+ 70
+
+ 80
+
+ 90
+
+ 100
+
+Bunny (72,027 triangles)
+
+ContinuousCuts
+
+ 0
+
+ 0
+
+ 500
+
+ 400
+
+ 10
+
+ 20
+
+ 30
+
+ 40
+ 60
+Render area (%)
+
+ 50
+
+ 70
+
+ 80
+
+ 90
+
+ 100
+
+Hand (18,905 triangles)
+
+ContinuousCuts
+
+)
+.
+c
+e
+s
+m
+
+i
+
+(
+ 
+e
+m
+T
+ 
+r
+e
+d
+n
+e
+R
+
+ 300
+
+ 200
+
+ 100
+
+)
+.
+c
+e
+s
+m
+
+i
+
+(
+ 
+e
+m
+T
+ 
+r
+e
+d
+n
+e
+R
+
+ 300
+
+ 200
+
+ 100
+
+ 0
+
+ 0
+
+ 10
+
+ 20
+
+ 30
+
+ 40
+ 60
+Render area (%)
+
+ 50
+
+ 70
+
+ 80
+
+ 90
+
+ 100
+
+ 0
+
+ 0
+
+ 10
+
+ 20
+
+ 30
+
+ 40
+ 60
+Render area (%)
+
+ 50
+
+ 70
+
+ 80
+
+ 90
+
+ 100
+
+Figure 7: Rendering time for continuous deformation, in re-
+lation to the relative size of the deformation bounding box,
+as a percentage of the screen area (512 (cid:2) 512)
+contains depth values to the closest point in the surface along
+a given vector (cid:0)!n , normal to the plane where the depth map
+is de(cid:2)ned. Depth maps can be used as an implicit represen-
+tation of an object as: f (p) = H(px) (cid:0) d(p), where d(p) is
+the closest distance of p to the plane, and px is the projection
+of the point into the plane, de(cid:2)ned in 2D coordinates local
+to that plane. Although a depth map is not a complete repre-
+sentation of the closest distance to an object, it can be used
+as an implicit representation of a convex surface, as long as
+all points in the surface are visible along the direction nor-
+mal to the depth map. In Fig. (6), for example, we used a
+depth map. To overcome the limitations of depth maps, one
+can approximate a distance (cid:2)eld based on depth maps along
+the six planes de(cid:2)ned by a cube embedding the object. We
+call this a depth map cube. For the purpose of rendering,
+an implicit representation can be obtained by combining the
+corresponding f functions for the six faces. Given two repre-
+sentations f1 and f2, a new representation f can be found as:
+f (p) = r (cid:1)min(j f1(p)j; j f2(p)j), where the sign r is obtained
+as positive for the cases where f1(p) and f2(p) are positive,
+i.e., when the point is in the inside of both representations.
+This combination is then repeated for the six faces of the
+cube. As an example of the memory savings, a 3D layered
+representation of resolution 1283 requires 8 MB of texture
+memory while a depth map cube of the same resolution re-
+quires only 6 (cid:2) 64KB = 384KB. However, there is a visibil-
+ity trade off, and the depth map cube can only be used for
+geometries which do not contain signi(cid:2)cant concavities.
+
+6.2. GPU Performance Results
+Different displacement textures were created to test our ap-
+proach. In this paper, we include ones simulating a peel
+(Fig.(1b)), a twist (Figs.(1c) and (4)), a bend (Fig.(1c)), and
+a knife cut (Fig.(6)). For Fig.(1b), an object (mask model)
+was placed under the original torso model, so that when it is
+peeled, the bottom surface is revealed.
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+Table 1: Weighted average of rendering time for continuous
+and discontinuous deformation in milliseconds.
+
+Since our approach is largely implemented as pixel
+shaders, its performance depends on the screen area of the
+deformation region rather than its complexity in terms of
+number of vertices. We performed a series of experiments
+with models of varying size and obtained rendering times
+for different sizes of the deformation region, relative to the
+size of the viewport (512 (cid:2) 512), on a Pentium XEON 2.8
+Ghz PC with 4096 MB RAM, equipped with a Quadro FX
+4400 with 512MB of video memory. Composite representa-
+tion in all these cases used 2MB of texture memory. Fig.(7)
+shows the rendering times vs. the effective screen area of the
+deformation region, as a percentage of the window area. We
+measured time for the rendering of continuous deformation
+(Continuous) and for a solid rendering of cuts (Cuts), as de-
+scribed in Section 5.1.2. We can see the overhead due to ex-
+tra intersection tests when rendering solid cuts. To overcome
+the performance cost of (cid:147)false(cid:148) intersections when rendering
+cuts, we may employ an empty space skipping mechanism,
+where rays are initiated only at the continuous part of the
+alpha mask used for the deformation. This information can
+be obtained from a distance (cid:2)eld representation of the cut
+geometry. If a sample point is found to be within the region
+of the cut, we can safely skip the sample points which are
+within the distance given by the distance (cid:2)eld at that point,
+without the need of testing for intersections with the object
+surface. This method proved to be very fast compared to the
+original method, and rendering time was comparable to that
+for continuous deformation.
+
+To summarize the rendering time for the two methods in a
+comparable way, we computed a weighted average on those
+results. The weighted average is computed as (cid:229)aktk=(cid:229)ak,
+where ak 2 [0;1] is the relative render area of the deformed
+space and tk is the rendering time for a measure k. Table 1
+shows the results of this averaging, where rendering time is
+given in milliseconds.
+
+6.3. Discussion
+Previous results are encouraging for future generations of
+GPUs. As per-pixel processing becomes more powerful, we
+believe that the speed up on deformation approaches based
+on ray traversal can be considerable. For applications where
+real-time is needed, such as games, the deformation pipeline
+can be improved with a multi-resolution mechanism. First,
+ray traversal can be performed in a best effort basis, where
+deformations taking place in a small area of the screen or
+at very high speed can be rendered using low frequency
+
+C. Correa & D. Silver / Programmable Shaders for Deformation Rendering
+
+sampling. One of features that makes our approach (cid:3)exi-
+ble is the ability to store complex deformations as textures.
+In our examples, deformations only require from 128 KB
+(peel) to 2 MB (twist). In general, a displacement texture of
+size w (cid:2) h (cid:2) d requires 8whd bytes. However, highly com-
+plex deformations may require large 3D textures to render
+high quality images. One mechanism to overcome this is
+to allow the composition of deformations via simpler tex-
+tures. Another limiting aspect is the implicit representation
+of complex objects via 3D textures. For instance, the ar-
+madillo model (at a resolution of 2563) required 64 MB of
+texture memory. This can be reduced by applying alternative
+representations as seen in section 6.1. However, handling
+large complex models requires a partitioning of the object
+into several textures and improved CPU-GPU bandwidth.
+With the advent of new vertex capabilities, improved ver-
+tex support may be available. We believe our approach still
+has validity and can complement mesh-based deformation.
+In fact, it would open possibilities for a hybrid approach,
+where coarse deformation can be implemented on a vertex
+shader, while (cid:2)ne-grained deformation and cuts can be done
+at the pixel level.
+
+7. Conclusions
+We have presented a novel pipeline for rendering deforma-
+tions and cuts using programmable graphics hardware. Un-
+like previous approaches, which introduce deformation as
+part of a vertex shader, we de(cid:2)ne deformation rendering as
+a pixel shader. This makes possible the rendering of cuts,
+which are dif(cid:2)cult to produce using vertex shaders due to
+the changes in mesh topology. In our case, we do not need
+to explicitly split the geometry or remesh along the edges of
+a cut. It also overcomes the need for a (cid:2)ne tessellation of
+the mesh, required for smooth rendering of deformation. To
+implement our approach, we use an implicit representation
+of the portion of the mesh undergoing deformation, stored in
+the GPU as a distance (cid:2)eld texture. We have shown how dis-
+placement maps can be applied to render deformation, simi-
+lar to image-space displacement mapping, and how they can
+be extended to render deformation-cuts. Through a number
+of examples, we show how our method can be used to ren-
+der hollow and solid objects, without the need for a complex
+tetrahedral mesh. We believe this approach has applicability
+in authoring and animation systems, in surgical simulation
+and interactive applications.
+
+References
+[Bar84] BARR A. H.: Global and local deformations of solid primitives. In SIGGRAPH
+’84: Proc. of the 11th annual conference on Computer graphics and interactive tech-
+niques (1984), pp. 21(cid:150)30. 2, 4, 5
+
+[Bar86] BARR A.: Ray tracing deformed surfaces. Computer Graphics (Proc. SIG-
+
+GRAPH 86) 20, 4 (1986), 287(cid:150)296. 2
+
+[Blo97] BLOOMENTHAL J.: Introduction to Implicit Surfaces. 1997. 2
+[BS07] BOTSCH M., SORKINE O.: On linear variational surface deformation methods.
+
+IEEE Transactions on Visualization and Computer Graphics (2007). 2
+
+[BSM(cid:3)02] BRUYNS C., SENGER S., MENON A., MONTGOMERY K., WILDERMUTH
+S., BOYLE R.: A survey of interactive mesh-cutting techniques and a new method
+for implementing generalized interactive mesh cutting using virtual tools. Journal of
+Visualization and Computer Animation 13, 1 (2002), 21(cid:150)42. 2
+
+[Coo84] COOK R. L.: Shade trees. Computer Graphics (Proc. SIGGRAPH 84) 18, 3
+
+(1984), 223(cid:150)231. 2
+
+[CSC06a] CORREA C., SILVER D., CHEN M.: Feature aligned volume manipulation
+for illustration and visualization. IEEE Transactions on Visualization and Computer
+Graphics (September-October 2006). 2
+
+[CSC06b] CORREA C. D., SILVER D., CHEN M.: Discontinuous displacement map-
+ping for volume graphics. In Fifth Eurographics / IEEE VGTC Workshop on Volume
+Graphics 2006 (2006), pp. 9(cid:150)16. 2
+
+D’EON E.: GPU Gems. Addison Wesley, 2004, ch. 42. 2
+
+[Dav67] DAVIS H.: Introduction to Vector Analysis, 3rd ed. Allyn and Bacon, 1967. 4
+[d’E04]
+[GWL(cid:3)03] GOODNIGHT N., WOOLLEY C., LEWIN G., LUEBKE D., HUMPHREYS
+G.: A multigrid solver for boundary value problems using programmable graphics
+hardware. In SIGGRAPH/EUROGRAPHICS conference on Graphics hardware 2003
+(2003), pp. 102(cid:150)111. 2
+
+[Har96] HART J. C.: Sphere tracing: A geometric method for the antialiased ray tracing
+
+of implicit surfaces. The Visual Computer 12, 10 (1996), 527(cid:150)545. 2
+
+[HEGD04] HIRCHE J., EHLERT A., GUTHE S., DOGGETT M.: Hardware accelerated
+per-pixel displacement mapping. In Graphics Interace 2004 (2004), pp. 153(cid:150)158. 2
+[HSS(cid:3)05] HADWIGER M., SIGG C., SCHARSACH H., BUHLER K., GROSS M.: Real-
+time ray-casting and advanced shading of discrete isosurfaces. In Eurographics 2005
+(2005). 2, 3, 4
+
+[JP02]
+
+JAMES D. L., PAI D. K.: Dyrt: dynamic response textures for real time defor-
+mation simulation with graphics hardware. ACM Trans. Graph. 21, 3 (2002), 582(cid:150)585.
+2
+
+[KB89] KALRA D., BARR A. H.: Guaranteed ray intersections with implicit surfaces.
+In SIGGRAPH ’89: Proceedings of the 16th annual conference on Computer graphics
+and interactive techniques (1989), pp. 297(cid:150)306. 2, 4
+
+[KW03] KR(cid:220)GER J., WESTERMANN R.: Linear algebra operators for GPU implemen-
+In SIGGRAPH ’03: ACM SIGGRAPH 2003 Papers
+
+tation of numerical algorithms.
+(2003), pp. 908(cid:150)916. 2
+
+[MBK06] MARINOV M., BOTSCH M., KOBBELT L.: GPU-based multiresolution de-
+formation using approximate normal (cid:2)eld reconstruction. ACM Journal of Graphics
+Tools (2006). 2
+
+[MS05] MOSEGAARD J., Sˆ(cid:159)RENSEN T.: GPU accelerated surgical simulators for
+
+complex morphology. In IEEE Virtual Reality (IEEE VR) (2005), pp. 147(cid:150)153. 2
+
+[NMK(cid:3)05] NEALEN A., MULLER M., KEISER R., BOXERMAN E., M.CARLSON:
+In Eurographics STAR
+
+Physically based deformable models in computer graphics.
+Report (2005). 2
+
+[OBM00] OLIVEIRA M. M., BISHOP G., MCALLISTER D.: Relief texture mapping.
+In Computer Graphics (Proc. SIGGRAPH 2000). ACM Press, 2000, pp. 359(cid:150)368. 2
+POLICARPO F., OLIVEIRA M. M.: Relief mapping of non-height-(cid:2)eld surface
+details. In SI3D ’06: Proceedings of the 2006 symposium on Interactive 3D graphics
+and games (2006), pp. 55(cid:150)62. 2
+
+[PO06]
+
+[RM95] RUPRECHT D., M(cid:220)LLER H.: Image warping with scattered data interpolation.
+
+IEEE Comput. Graph. Appl. 15, 2 (1995), 37(cid:150)43. 5
+
+[SGGM06]
+
+SUD A., GOVINDARAJU N., GAYLE R., MANOCHA D.:
+
+Interactive 3d
+distance (cid:2)eld computation using linear factorization. In SI3D ’06: Proceedings of the
+2006 symposium on Interactive 3D graphics and games (2006), pp. 117(cid:150)124. 3
+
+[SKE05]
+
+SCHEIN S., KARPEN E., ELBER G.: Real-time geometric deformation dis-
+placement maps using programmable hardware. The Visual Computer 21, 8-10 (2005),
+791(cid:150)800. 2
+
+[SP86]
+
+[SP91]
+
+SEDERBERG T. W., PARRY S. R.: Free-form deformation of solid geometric
+models. In SIGGRAPH ’86: Proc. of the 13th annual conference on Computer graphics
+and interactive techniques (New York, NY, USA, 1986), ACM Press, pp. 151(cid:150)160. 2
+SCLAROFF S., PENTLAND A.: Generalized implicit functions for computer
+graphics. In SIGGRAPH ’91: Proceedings of the 18th annual conference on Computer
+graphics and interactive techniques (1991), pp. 247(cid:150)250. 2
+
+[SPG03]
+
+SIGG C., PEIKERT R., GROSS M.: Signed distance transform using graph-
+ics hardware. In VIS ’03: Proceedings of the 14th IEEE Visualization 2003 (VIS’03)
+(2003), p. 12. 3
+
+[WTL(cid:3)04] WANG L., TONG X., LIN S., HU S., GUO B., SHUM H.-Y.: Generalized
+
+displacement maps. In Proc. Eurographics Symposium on Rendering (2004). 2
+
+c(cid:13) Association for Computing Machinery, Inc. 2007.
+
+

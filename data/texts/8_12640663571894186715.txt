@@ -1,0 +1,417 @@
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+Go
+Home About Contact Blog Code Publications DMOZ100k06 Photography
+Running Hadoop On Ubuntu Linux (Single-Node Cluster)
+From Michael G. Noll
+
+Contents
+1 What we want to do 2 Prerequisites
+2.1 Sun Java 1.5.0 2.2 Adding a dedicated Hadoop system user 2.3 Configuring SSH 2.4 Disabling IPv6 3 Hadoop 3.1 Installation 3.2 Excursus: Hadoop Distributed File System (HDFS) 3.3 Configuration
+3.3.1 hadoop-env.sh 3.3.2 hadoop-site.xml 3.4 Formatting the name node 3.5 Starting your single-node cluster 3.6 Stopping your single-node cluster 3.7 Running a MapReduce job 3.7.1 Download example input data 3.7.2 Restart the Hadoop cluster 3.7.3 Copy local example data to HDFS 3.7.4 Run the MapReduce job 3.7.5 Retrieve the job result from HDFS 3.8 Hadoop Web Interfaces 3.8.1 MapReduce Job Tracker Web Interface 3.8.2 Task Tracker Web Interface 3.8.3 HDFS Name Node Web Interface 4 What's next? 5 Feedback 6 Related Links 7 Changelog
+
+What we want to do
+In this short tutorial, I will describe the required steps for setting up a single-node Hadoop
+1 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+(http://lucene.apache.org/hadoop/) cluster using the Hadoop Distributed File System (HDFS) (http://lucene.apache.org/hadoop/hdfs_design.html) on Ubuntu Linux (http://www.ubuntu.com/) .
+Are you looking for the multi-node cluster tutorial? Just head over there.
+Hadoop (http://lucene.apache.org/hadoop/) is a framework written in Java for running applications on large clusters of commodity hardware and incorporates features similar to those of the Google File System (http://en.wikipedia.org/wiki/Google_File_System) and of MapReduce (http://en.wikipedia.org/wiki/MapReduce) . HDFS (http://lucene.apache.org/hadoop/hdfs_design.html) is a highly fault-tolerant distributed file system and like Hadoop designed to be deployed on low-cost hardware. It provides high throughput access to application data and is suitable for applications that have large data sets.
+
+Figure 1: Cluster of machines running Hadoop at Yahoo! (Source: Yahoo!)
+The main goal of this tutorial is to get a simple Hadoop installation up and running so that you can play around with the software and learn more about it.
+This tutorial has been tested with the following software versions:
+Ubuntu Linux (http://www.ubuntu.com/) 7.10, 7.04 Hadoop (http://lucene.apache.org/hadoop/) 0.15.2, released January 2008 (also works with 0.14.x and 0.13.x)
+You can find the time of the last document update at the very bottom of this page.
+Prerequisites
+Sun Java 1.5.0
+Hadoop requires a working Java 1.5.x (aka 5.0.x) installation. However, using Java 1.6.x (aka 6.0.x) is recommended (http://www.nabble.com/14.1-to-14.2-t4604384.html) for running Hadoop. For the sake of this tutorial, I will describe the installation of Java 1.5. But if you want Java 1.6 (which you should), simply use the package sun-java6-jdk and adjust the paths described below as needed.
+Install Sun's Java Development Kit (JDK) v1.5.0 via Synaptic (System > Administration > Synaptic Package Manager) or via apt-get. Install the package
+sun-java5-jdk
+for the full JDK which will be placed in /usr/lib/jvm/java-1.5.0-sun.
+After installation, check if Sun's JDK is on top of /etc/jvm. For example, mine looks like this:
+
+2 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+# /etc/jvm # # This file defines the default system JVM search order. Each # JVM should list their JAVA_HOME compatible directory in this file. # The default system JVM is the first one available from top to # bottom.
+/usr/lib/jvm/java-1.5.0-sun /usr/lib/jvm/java-gcj /usr/lib/jvm/ia32-java-1.5.0-sun /usr
+Adding a dedicated Hadoop system user
+We will use a dedicated Hadoop user account for running Hadoop. While that's not required it is recommended because it helps to separate the Hadoop installation from other software applications and user accounts running on the same machine (think: security, permissions, backups, etc).
+$ sudo addgroup hadoop $ sudo adduser --ingroup hadoop hadoop
+This will add the user hadoop and the group hadoop to your local machine.
+Configuring SSH
+Hadoop requires SSH access to manage its nodes, i.e. remote machines plus your local machine if you want to use Hadoop on it (which is what we want to do in this short tutorial). For our single-node setup of Hadoop, we therefore need to configure SSH access to localhost for the hadoop user we create in the previous section.
+I assume that you have SSH up and running on your machine and configured it to allow SSH public key authentication. If not, there are several guides (http://ubuntuguide.org/) available.
+First, we have to generate an SSH key for the hadoop user.
+noll@ubuntu:~$ su - hadoop hadoop@ubuntu:~$ ssh-keygen -t rsa -P "" Generating public/private rsa key pair. Enter file in which to save the key (/home/hadoop/.ssh/id_rsa): Created directory '/home/hadoop/.ssh'. Your identification has been saved in /home/hadoop/.ssh/id_rsa. Your public key has been saved in /home/hadoop/.ssh/id_rsa.pub. The key fingerprint is: 9d:47:ab:d7:22:54:f0:f9:b9:3b:64:93:12:75:81:27 hadoop@ubuntu hadoop@ubuntu:~$
+The second line will create an RSA key pair with an empty password. Generally, using an empty password is not recommended, but in this case it is needed to unlock the key without your interaction (you don't want to enter the passphrase everytime Hadoop interacts with its nodes).
+Second, you have to enable SSH access to your local machine with this newly created key.
+hadoop@ubuntu:~$ cat $HOME/.ssh/id_rsa.pub >> $HOME/.ssh/authorized_keys
+The final step is to test the SSH setup by connecting to your local machine with the hadoop user. The step is also needed to save your local machine's host key fingerprint to the hadoop user's known_hosts file. If you have any special SSH configuration for your local machine like a non-standard SSH port, you can define host-specific SSH options in $HOME/.ssh/config (see man ssh_config for more information).
+
+3 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+
+hadoop@ubuntu:~$ ssh localhost The authenticity of host 'localhost (127.0.0.1)' can't be established. RSA key fingerprint is 76:d7:61:86:ea:86:8f:31:89:9f:68:b0:75:88:52:72. Are you sure you want to continue connecting (yes/no)? yes Warning: Permanently added 'localhost' (RSA) to the list of known hosts. Ubuntu 7.04 ... hadoop@ubuntu:~$
+If the SSH connect should fail, these general tips might help:
+Enable debugging with ssh -vvv localhost and investigate the error in detail. Check the SSH server configuration in /etc/ssh/sshd_config, in particular the options PubkeyAuthentication (which should be set to yes) and AllowUsers (if this option is active, add the hadoop user to it). If you made any changes to the SSH server configuration file, you can force a configuration reload with sudo /etc/init.d/ssh reload.
+Disabling IPv6
+I have not found out yet how to configure Hadoop to listen on all IPv4 (again: IPv4) network interfaces. Using 0.0.0.0 for the various networking-related Hadoop configuration options will result in Hadoop binding to the IPv6 addresses on my Ubuntu box.
+As a workaround (and realizing that there's no practical point in enabling IPv6 on a box when you are not connected to any IPv6 network), I simply disabled IPv6 on my Ubuntu machine.
+To disable IPv6 on Ubuntu Linux, open /etc/modprobe.d/blacklist in the editor of your choice and add the following lines to the end of the file:
+# disable IPv6 blacklist ipv6
+You have to reboot your machine in order to make the changes take effect.
+Hadoop
+Installation
+You have to download Hadoop (http://www.apache.org/dyn/closer.cgi/lucene/hadoop/) from the Apache Download Mirrors (http://www.apache.org/dyn/closer.cgi/lucene/hadoop/) and extract the contents of the Hadoop package to a location of your choice. I picked /usr/local/hadoop. Make sure to change the owner of all the files to the hadoop user and group, for example:
+$ cd /usr/local $ sudo tar xzf hadoop-0.14.2.tar.gz $ sudo mv hadoop-0.14.2 hadoop $ sudo chown -R hadoop:hadoop hadoop
+(just to give you the idea, YMMV - personally, I create a symlink from hadoop-0.14.2 to hadoop)
+Excursus: Hadoop Distributed File System (HDFS)
+From The Hadoop Distributed File System: Architecture and Design (http://lucene.apache.org/hadoop/hdfs_design.html) :
+The Hadoop Distributed File System (HDFS) is a distributed file system designed to run on
+
+4 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+commodity hardware. It has many similarities with existing distributed file systems. However, the differences from other distributed file systems are significant. HDFS is highly fault-tolerant and is designed to be deployed on low-cost hardware. HDFS provides high throughput access to application data and is suitable for applications that have large data sets. HDFS relaxes a few POSIX requirements to enable streaming access to file system data. HDFS was originally built as infrastructure for the Apache Nutch web search engine project. HDFS is part of the Apache Hadoop project, which is part of the Apache Lucene project.
+The following picture gives an overview of the most important HDFS components.
+
+HDFS Architecture (source: http://lucene.apache.org/hadoop/hdfs_design.html
+Configuration
+Our goal in this tutorial is a single-node setup of Hadoop. More information of what we do in this section is available on the Hadoop Wiki (http://wiki.apache.org/lucene-hadoop/GettingStartedWithHadoop) .
+hadoop-env.sh
+The only required environment variable we have to configure for Hadoop in this tutorial is JAVA_HOME. Open <HADOOP_INSTALL>/conf/hadoop-env.sh in the editor of your choice (if you used the installation path in this tutorial, the full path is /usr/local/hadoop/conf/hadoop-env.sh) and set the JAVA_HOME environment variable to the Sun JDK/JRE 1.5.0 directory. Change
+# The java implementation to use. Required. # export JAVA_HOME=/usr/lib/j2sdk1.5-sun
+to
+# The java implementation to use. Required. export JAVA_HOME=/usr/lib/jvm/java-1.5.0-sun
+
+5 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+If you chose to use Java 1.6, remember to put the correct paths in here!
+hadoop-site.xml
+Any site-specific configuration of Hadoop is configured in <HADOOP_INSTALL>/conf/hadoop-site.xml. Here we will configure the directory where Hadoop will store its data files, the ports it listens to, etc. Our setup will use Hadoop's Distributed File System, HDFS (http://lucene.apache.org/hadoop/hdfs_design.html) , even though our little "cluster" only contains our single local machine.
+You can leave the settings below as is with the exception of the hadoop.tmp.dir variable which you have to change to the directory of your choice, for example /usr/local/hadoop-datastore/hadoop-${user.name}. Hadoop will expand ${user.name} to the system user which is running Hadoop, so in our case this will be hadoop and thus the final path will be /usr/local/hadoop-datastore/hadoop-hadoop.
+Note: Depending on your choice of location, you might have to create the directory manually with sudo mkdir /your/path; sudo chown hadoop:hadoop /your/path in case the hadoop user does not have the required permissions to do so (otherwise, you will see a java.io.IOException when you try to format the name node in the next section).
+<?xml version="1.0"?> <?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!-- Put site-specific property overrides in this file. -->
+<configuration>
+<property> <name>hadoop.tmp.dir</name> <value>/your/path/to/hadoop/tmp/dir/hadoop-${user.name}</value> <description>A base for other temporary directories.</description>
+</property>
+<property> <name>fs.default.name</name> <value>hdfs://localhost:54310</value> <description>The name of the default file system. A URI whose scheme and authority determine the FileSystem implementation. The uri's scheme determines the config property (fs.SCHEME.impl) naming the FileSystem implementation class. The uri's authority is used to determine the host, port, etc. for a filesystem.</description>
+</property>
+<property> <name>mapred.job.tracker</name> <value>localhost:54311</value> <description>The host and port that the MapReduce job tracker runs at. If "local", then jobs are run in-process as a single map and reduce task. </description>
+</property>
+<property> <name>dfs.replication</name> <value>1</value> <description>Default block replication. The actual number of replications can be specified when the file is created. The default is used if replication is not specified in create time. </description>
+</property>
+</configuration>
+See Getting Started with Hadoop (http://wiki.apache.org/lucene-hadoop/GettingStartedWithHadoop) and the documentation in Hadoop's API Overview (http://lucene.apache.org/hadoop/api/overview-summary.html) if you have any questions about Hadoop's configuration options.
+
+6 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+Formatting the name node
+The first step to starting up your Hadoop installation is formatting the Hadoop filesystem which is implemented on top of the local filesystem of your "cluster" (which includes only your local machine if you followed this tutorial). You need to do this the first time you set up a Hadoop cluster. Do not format a running Hadoop filesystem, this will cause all your data to be erased.
+To format the filesystem (which simply initializes the directory specified by the dfs.name.dir variable), run the command
+hadoop@ubuntu:~$ <HADOOP_INSTALL>/hadoop/bin/hadoop namenode -format
+The output will look like this:
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop namenode -format 07/09/21 12:00:25 INFO dfs.NameNode: STARTUP_MSG: /*********************************************************** STARTUP_MSG: Starting NameNode STARTUP_MSG: host = ubuntu/127.0.0.1 STARTUP_MSG: args = [-format] ***********************************************************/ 07/09/21 12:00:25 INFO dfs.Storage: Storage directory [...] has been successfully formatted. 07/09/21 12:00:25 INFO dfs.NameNode: SHUTDOWN_MSG: /*********************************************************** SHUTDOWN_MSG: Shutting down NameNode at ubuntu/127.0.0.1 ***********************************************************/ hadoop@ubuntu:/usr/local/hadoop$
+Starting your single-node cluster
+Run the command:
+hadoop@ubuntu:~$ <HADOOP_INSTALL>/bin/start-all.sh
+This will startup a Namenode, Datanode, Jobtracker and a Tasktracker on your machine.
+The output will look like this:
+hadoop@ubuntu:/usr/local/hadoop$ bin/start-all.sh starting namenode, logging to /usr/local/hadoop/bin/../logs/hadoop-hadoop-namenode-ubuntu.out localhost: starting datanode, logging to /usr/local/hadoop/bin/../logs/hadoop-hadoop-datanode-ubuntu.out localhost: starting secondarynamenode, logging to /usr/local/hadoop/bin/../logs/hadoop-hadoop-secondarynamenode-ubu starting jobtracker, logging to /usr/local/hadoop/bin/../logs/hadoop-hadoop-jobtracker-ubuntu.out localhost: starting tasktracker, logging to /usr/local/hadoop/bin/../logs/hadoop-hadoop-tasktracker-ubuntu.out hadoop@ubuntu:/usr/local/hadoop$
+A nifty tool for checking whether the expected Hadoop processes are running is jps (part of Sun's Java since v1.5.0). See also How to debug MapReduce programs (http://wiki.apache.org/lucene-hadoop/HowToDebugMapReducePrograms) .
+hadoop@sea:/usr/local/hadoop/$ jps 19811 TaskTracker 19674 SecondaryNameNode 19735 JobTracker 19497 NameNode 20879 TaskTracker$Child 21810 Jps
+You can also check with netstat if Hadoop is listening on the configured ports.
+
+7 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+
+hadoop@ubuntu:~$ sudo netstat -plten | grep java tcp 0 0 0.0.0.0:50050 0.0.0.0:* LISTEN 1001 tcp 0 0 127.0.0.1:54310 0.0.0.0:* LISTEN 1001 tcp 0 0 127.0.0.1:54311 0.0.0.0:* LISTEN 1001 tcp 0 0 0.0.0.0:50090 0.0.0.0:* LISTEN 1001 tcp 0 0 0.0.0.0:50060 0.0.0.0:* LISTEN 1001 tcp 0 0 0.0.0.0:50030 0.0.0.0:* LISTEN 1001 tcp 0 0 0.0.0.0:50070 0.0.0.0:* LISTEN 1001 tcp 0 0 0.0.0.0:50010 0.0.0.0:* LISTEN 1001 tcp 0 0 0.0.0.0:50075 0.0.0.0:* LISTEN 1001 hadoop@ubuntu:~$
+
+86234 85800 86383 86119 86233 86393 85964 86045 86102
+
+23634/java 23317/java 23543/java 23478/java 23634/java 23543/java 23317/java 23389/java 23389/java
+
+If there are any errors, examine the log files in the <HADOOP_INSTALL>/logs/ directory.
+Stopping your single-node cluster
+Run the command
+
+hadoop@ubuntu:~$ <HADOOP_INSTALL>/bin/stop-all.sh
+
+to stop all the daemons running on your machine. Exemplary output:
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/stop-all.sh stopping jobtracker localhost: Ubuntu 7.04 localhost: stopping tasktracker stopping namenode localhost: Ubuntu 7.04 localhost: stopping datanode localhost: Ubuntu 7.04 localhost: stopping secondarynamenode hadoop@ubuntu:/usr/local/hadoop$
+
+Running a MapReduce job
+We will now run your first Hadoop MapReduce (http://wiki.apache.org/lucene-hadoop/HadoopMapReduce) job. We will use the WordCount example job (http://wiki.apache.org/lucene-hadoop/WordCount) which reads text files and counts how often words occur. The input is text files and the output is text files, each line of which contains a word and the count of how often it occured, separated by a tab. More information of what happens behind the scenes (http://wiki.apache.org/lucene-hadoop/WordCount) is available at the Hadoop Wiki (http://wiki.apache.org/lucene-hadoop/WordCount) .
+Download example input data
+We will use three ebooks from Project Gutenberg for this example:
+The Outline of Science, Vol. 1 (of 4) by J. Arthur Thomson (http://www.gutenberg.org/etext/20417) The Notebooks of Leonardo Da Vinci (http://www.gutenberg.org/etext/5000) Ulysses by James Joyce (http://www.gutenberg.org/etext/4300)
+Download each ebook as plain text files in us-ascii encoding and store the uncompressed files in a temporary directory of choice, for example /tmp/gutenberg.
+
+8 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+
+hadoop@ubuntu:~$ ls -l /tmp/gutenberg/ total 3592 -rw-r--r-- 1 hadoop hadoop 674425 2007-01-22 12:56 20417-8.txt -rw-r--r-- 1 hadoop hadoop 1423808 2006-08-03 16:36 7ldvc10.txt -rw-r--r-- 1 hadoop hadoop 1561677 2004-11-26 09:48 ulyss12.txt hadoop@ubuntu:~$
+
+Restart the Hadoop cluster
+Restart your Hadoop cluster if it's not running already.
+hadoop@ubuntu:~$ <HADOOP_INSTALL>/bin/start-all.sh
+
+Copy local example data to HDFS
+Before we run the actual MapReduce job, we first have to copy (http://wiki.apache.org/lucene-hadoop/ImportantConcepts) the files from our local file system to Hadoop's HDFS (http://lucene.apache.org/hadoop/hdfs_design.html) .
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -copyFromLocal /tmp/gutenberg gutenberg
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -ls
+
+Found 1 items
+
+/user/hadoop/gutenberg <dir>
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -ls gutenberg
+
+Found 3 items
+
+/user/hadoop/gutenberg/20417-8.txt
+
+<r 1> 674425
+
+/user/hadoop/gutenberg/7ldvc10.txt
+
+<r 1> 1423808
+
+/user/hadoop/gutenberg/ulyss12.txt
+
+<r 1> 1561677
+
+Run the MapReduce job
+Now, we actually run the WordCount examle job.
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop jar hadoop-0.14.2-examples.jar wordcount gutenberg gutenberg-output
+
+This command will read all the files in the HDFS directory gutenberg, process it, and store the result in the HDFS directory gutenberg-output.
+Exemplary output of the previous command in the console:
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop jar hadoop-0.14.2-examples.jar wordcount gutenberg gutenberg-output
+
+07/09/21 13:00:30 INFO mapred.FileInputFormat: Total input paths to process : 3
+
+07/09/21 13:00:31 INFO mapred.JobClient: Running job: job_200709211255_0001
+
+07/09/21 13:00:32 INFO mapred.JobClient: map 0% reduce 0%
+
+07/09/21 13:00:42 INFO mapred.JobClient: map 66% reduce 0%
+
+07/09/21 13:00:47 INFO mapred.JobClient: map 100% reduce 22%
+
+07/09/21 13:00:54 INFO mapred.JobClient: map 100% reduce 100%
+
+07/09/21 13:00:55 INFO mapred.JobClient: Job complete: job_200709211255_0001
+
+07/09/21 13:00:55 INFO mapred.JobClient: Counters: 12
+
+07/09/21 13:00:55 INFO mapred.JobClient: Job Counters
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Launched map tasks=3
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Launched reduce tasks=1
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Data-local map tasks=3
+
+07/09/21 13:00:55 INFO mapred.JobClient: Map-Reduce Framework
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Map input records=77637
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Map output records=628439
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Map input bytes=3659910
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Map output bytes=6061344
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Combine input records=628439
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Combine output records=103910
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Reduce input groups=85096
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Reduce input records=103910
+
+07/09/21 13:00:55 INFO mapred.JobClient:
+
+Reduce output records=85096
+
+hadoop@ubuntu:/usr/local/hadoop$
+
+9 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+
+Check if the result is successfully stored in HDFS directory gutenberg-output:
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -ls
+
+Found 2 items
+
+/user/hadoop/gutenberg <dir>
+
+/user/hadoop/gutenberg-output <dir>
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -ls gutenberg-output
+
+Found 1 items
+
+/user/hadoop/gutenberg-output/part-00000
+
+<r 1> 903193
+
+hadoop@ubuntu:/usr/local/hadoop$
+
+Retrieve the job result from HDFS
+To inspect the file, you can copy it from HDFS to the local file system. Alternatively, you can use the command
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -cat gutenberg-output/part-00000
+
+to read the file directly from HDFS without copying it to the local file system. In this tutorial, we will copy the results to the local file system though.
+
+hadoop@ubuntu:/usr/local/hadoop$ mkdir /tmp/gutenberg-output
+
+hadoop@ubuntu:/usr/local/hadoop$ bin/hadoop dfs -copyToLocal gutenberg-output/part-00000 /tmp/gutenberg-output
+
+hadoop@ubuntu:/usr/local/hadoop$ head /tmp/gutenberg-output/part-00000
+
+"(Lo)cra"
+
+1
+
+"1490 1
+
+"1498," 1
+
+"35" 1
+
+"40," 1
+
+"A 2
+
+"AS-IS".
+
+2
+
+"A_ 1
+
+"Absoluti
+
+1
+
+"Alack! 1
+
+hadoop@ubuntu:/usr/local/hadoop$
+
+Note that in this specific output the quote signs (") enclosing the words in the head output above have not been inserted by Hadoop. They are the result of the word tokenizer used in the WordCount example, and in this case they matched the beginning of a quote in the ebook texts. Just inspect the part-00000 file further to see it for yourself.
+Hadoop Web Interfaces
+Hadoop comes with several web interfaces which are by default (see conf/hadoop-default.xml) available at these locations:
+http://localhost:50030/ - web UI for MapReduce job tracker(s) http://localhost:50060/ - web UI for task tracker(s) http://localhost:50070/ - web UI for HDFS name node(s)
+These web interfaces provide concise information about what's happening in your Hadoop cluster. You might want to give them a try.
+MapReduce Job Tracker Web Interface
+The job tracker web UI provides information about general job statistics of the Hadoop cluster, running/completed/failed jobs and a job history log file. It also gives access to the local machine's Hadoop log files (the machine on which the web UI is running on).
+By default, it's available at http://localhost:50030/.
+
+10 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+
+Figure 2: A screenshot of Hadoop's Job Tracker web interface.
+Task Tracker Web Interface
+The task tracker web UI shows you running and non-running tasks. It also gives access to the local machine's Hadoop log files. By default, it's available at http://localhost:50060/.
+
+Figure 3: A screenshot of Hadoop's Task Tracker web interface.
+HDFS Name Node Web Interface
+The name node web UI shows you a cluster summary including information about total/remaining capacity, live and dead nodes. Additionally, it allows you to browse the HDFS namespace and view the contents of its files in the web browser. It also gives access to the local machine's Hadoop log files. By default, it's available at http://localhost:50070/.
+
+11 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+
+Figure 4: A screenshot of Hadoop's Name Node web interface.
+What's next?
+If you're feeling comfortable, you can continue your Hadoop experience with my follow-up tutorial Running Hadoop On Ubuntu Linux (Multi-Node Cluster) where I describe how to build a Hadoop multi-node cluster with two Ubuntu boxes (this will increase your current cluster size by 100% :-P).
+In addition, I wrote tutorial on how to code a simple MapReduce job in the Python programming language which can serve as the basis for writing your own MapReduce programs.
+Feedback
+Comments, questions and constructive feedback are always welcome. You can comment on the blog post (http://www.michael-noll.com/blog/2007/08/05/running-hadoop-on-ubuntu/) or drop me a note.
+Related Links
+Running Hadoop On Ubuntu Linux (Multi-Node Cluster) Writing An Hadoop MapReduce Program In Python Hadoop home page (http://lucene.apache.org/hadoop/) Project Description (http://wiki.apache.org/lucene-hadoop/ProjectDescription) @ Hadoop Wiki Getting Started with Hadoop (http://wiki.apache.org/lucene-hadoop/GettingStartedWithHadoop) @ Hadoop Wiki How to debug MapReduce programs (http://wiki.apache.org/lucene-hadoop/HowToDebugMapReducePrograms) @ Hadoop Wiki Hadoop API Overview (http://lucene.apache.org/hadoop/api/overview-summary.html)
+Changelog
+Only major changes are listed here. For the full changelog, click on the "History" link in the footer at the
+
+12 13
+
+2008-1-10 1:33
+
+Running Hadoop On Ubuntu Linux (Single-Node Cluster) - ... http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubun...
+very bottom of this web page.
+2008-01-09: tested tutorial with Hadoop 0.15.2 2007-10-26: updated tutorial for Hadoop 0.14.2 (formerly 0.14.1) 2007-09-26: added screenshots of Hadoop web interfaces 2007-09-21: updated tutorial for Hadoop 0.14.1 (formerly 0.13.0)
+Tags: apache, cluster, foss, google, hadoop, howto, lucene, large-scale, linux, mapreduce, node, open source, scalability, screenshot, screenshots, single-node, tutorial, ubuntu Retrieved from "http://www.michael-noll.com/wiki/Running_Hadoop_On_Ubuntu_Linux_%28Single-Node_Cluster%29"
+Categories: Ubuntu | Hadoop | Tutorials & HOWTOs
+Article | Discussion | View source | History
+Log in / create account
+What links here | Related changes | Upload file | Special pages | Permanent link
+This page was last modified 10:30, 9 January 2008. This page has been accessed 4,021 times.
+Michael-Noll.com and all contents copyright © 2004-2008 by Michael G. Noll, unless otherwise noted.
+
+13 13
+
+2008-1-10 1:33
+
+

@@ -1,0 +1,1717 @@
+A Survey of Shading Models for Real-time Rendering
+or How to steal components from various BRDFs and combine them into your own
+Karsten Schwenk November 12, 2011
+Abstract This article presents a survey of popular shading models used in 3D computer graphics. Each model is discussed on the basis of an hardware-accelerated implementation that runs on typical consumergrade graphics boards. The discussion is focused on interactive realtime applications, where ­ besides realism ­ computational costs, scalability, and easily tweakable parameters are important factors. Furthermore, an attempt is made to incorporate the strengths of some of the discussed shading models into a new one. Special attention has been paid to the aforementioned factors to make the model particularly suitable for real-time applications such as video games. Update 2011: This is a slightly changed version of an article I wrote in 2008. I have fixed some mistakes and tried to state some facts more clearly.
+1
+
+Contents
+
+1 Introduction
+
+3
+
+2 Shading fundamentals 2.1 Radiometry . . . . . . . . . . . . . . . . . . . . . . . . . . . . 2.2 The bidirectional reflectance distribution function . . . . . . . 2.3 Fresnel reflectance . . . . . . . . . . . . . . . . . . . . . . . .
+
+4 4 6 9
+
+3 Popular shading models
+
+12
+
+3.1 The test framework . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+3.2 Lambert . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+3.3 Phong . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+3.4 Oren-Nayar . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+
+3.5 Cook-Torrance . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+
+3.6 Ashikhmin-Shirley . . . . . . . . . . . . . . . . . . . . . . . . 24
+
+3.7 Ward . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+
+3.8 Lafortune . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28
+
+3.9 Strauss . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 29
+
+3.10 Schlick . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31
+
+3.11 Other interesting models . . . . . . . . . . . . . . . . . . . . . 32
+
+4 Yet another shading model
+
+34
+
+4.1 Requirements . . . . . . . . . . . . . . . . . . . . . . . . . . . 34
+
+4.2 The model . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 35
+
+4.3 Discussion of Results . . . . . . . . . . . . . . . . . . . . . . . 42
+
+5 Conclusion
+
+43
+
+2
+
+1 Introduction
+The field of computer graphics has bred numerous shading models over the past years. This article presents a survey of the most popular1 of these models. The main objective of this article is to assess the costs and benefits of these shading models with regard to their application in hardware-accelerated real-time computer graphics. HLSL-implementations of the models can be found in the accompanying FX file. A project file for NVIDIA's FXComposer 2.0 is included, too.
+Schlick [28] conducted a similar survey over a decade ago. The shading models discussed there are still widely used and many of them also appear in this article. So the set of popular shading models doesn't seem to have changed a lot. One thing that has changed, however, is that it is now possible to run even the computationally expensive, physically-based models on consumergrade graphics hardware. This new platform and the applications that use it have their own strengths and weaknesses, distinct from those of the path tracing algorithms that most shading models where designed for. Factors like the number of needed texture look-ups, draw call batching, number of needed vertex output registers, and scalability over a large range of computational power play an important role. Another important criterion, more related to authoring content for the application than the platform it runs on, is the parameter set of shading models. Physically-based models tend to have abstract physical properties of real-world materials as parameters, while phenomenological models often feature intuitive parameters that can be easily tweaked by artists.
+Update: This article should have a separate and thorough section on related work, but I'm not in the mood to write something up right now, so I'll just give a few pointers here. The two SIGGRAPH courses `Advances in Real-Time Rendering in 3D Graphics and Games'2 and `Physically-Based Shading Models in Film and Game Production'3 should be mentioned. They provide a nice overview of recent developments in the industry and some interesting `tales from the trenches'. The book `Programming Vertex, Geometry, and Pixel Shaders' by Wolfgang Engel et al. contains a chapter with HLSL-implementations of many popular shading models. It used to be available online for free at gamedevn et, but now it has mysteriously disappeared. I guess it is only available in print now. A good entry point to find additional references is the Book `Real-time Rendering' [1]. `Physically based Rendering' [23] is also a good reference on BRDFs and surface
+1`most popular' here means `the ones I consider most popular'. Also, I will only discuss models that try to mimic the appearance of real-world materials, non-photorealistic models like Celshading, Gooch-shading, or Hatching are not discussed here.
+2http://advances.realtimerendering.com/ 3http://renderwonk.com/publications/s2010-shading-course/
+3
+
+reflection (although the focus is on offline rendering). The next section provides a brief overview of some shading fundamentals and terminology used throughout the article. Then, in section 3, the models are described and analyzed. Section 4 contains the discussion of a newly developed shading model, specifically tailored to real-time applications running on graphics-hardware. The findings are summarized in Section 5.
+2 Shading fundamentals
+This section briefly introduces some terms and definitions that will be used in the following sections. None of the topics is discussed in-depth here, I just included them to get a somewhat self-contained article. Readers familiar with these topics may skip this section or use it only as a quick reference. First, definitions of the most important radiometric quantities are given, followed by the definition of the bidirectional reflectance distribution function (BRDF). Finally, Fresnel reflectance and its application to BRDFs is discussed.
+2.1 Radiometry
+Radiometry is the field of study involved with the measurement of electromagnetic radiation, including, but not limited to, visible light. Although rarely used directly in real-time computer graphics, knowing the basic radiometric quantities and the related formulas helps to understand the simplifications and approximations typically used in fields where capturing the qualitative appearance of objects is more important than a quantitatively correct simulation of light transport.
+2.1.1 Radiant flux
+Radiant flux, also called radiant power, expresses the amount of radiation energy flowing through (or to or from) a surface per unit time. It is usually measured in Joules per second (J/s) or Watts (W ) and denoted by the the letter . Because radiant flux is defined for a surface (be it real or imaginary), it is an easy to grasp, quite `absolute' quantity. However, it is often more practical to forget about the attached surface and express energy flow per unit area. The next two quantities do that.
+4
+
+2.1.2 Irradiance
+
+Irradiance is the total amount of incident radiant power per unit surface area. It is expressed in Watts per square-meter (W/m2) and can be thought
+of as the area density of radiant flux. It is defined as:
+
+d E= .
+dA
+
+(1)
+
+2.1.3 Radiant exitance
+
+Radiant exitance (M ) or Radiosity (usually denoted B) is the amount of power emitted per unit surface area. Note that some authors define radiant exitance as solely the self-emitted power and radiosity as the emitted plus reflected power. In newer literature, however, the definition
+
+d M =B=
+dA seems to be preferred. Like for irradiance, the unit is W/m2.
+
+(2)
+
+2.1.4 Radiance
+
+Radiance is radiant flux per unit projected area per unit solid angle. The
+
+definition in terms of radiant flux is:
+
+d2 d2
+
+L
+
+=
+
+d
+
+dA
+
+=
+
+d
+
+, dA cos 
+
+(3)
+
+where dA denotes the projected area and  is the angle between the normal
+
+of the surface we are interested in and the direction vector `pointing towards the solid angle' d. The SI unit of radiance is W/(sr m2).4 The radiance
+
+function L(x, ) is a five-dimensional quantity (3 coordinates for position +
+
+2 for the direction), which makes it a bit hard to grasp. Intuitively it can
+
+be thought of the power traveling through a point x in direction . This
+
+makes radiance the most important quantity in computer graphics, because
+
+if the radiance function of a scene is known, i.e. for every point the flux that
+
+travels through this point in every direction is known, the `appearance' of
+
+the scene is known. (In fact it is sufficient to know the incident radiance on
+
+the image plane ­ whatever this may be.) Another nice property of radiance
+
+is that it remains constant along straight paths through empty space.
+
+When talking about radiance often different qualifiers are prepended to make clear what fraction of radiance is meant in a given context. The most common ones are incident radiance (Li) and exitant radiance (Lo), meaning the
+4In this article I will use the convenient but a bit sloppy notation where  denotes a normalized direction vector and d the differential solid angle `around' it.
+
+5
+
+radiance arriving respectively leaving a point. Exitant radiance is sometimes further divided into reflected radiance Lr and self-emitted radiance (Le). Also field radiance and surface radiance are often used to distinguish the radiance at surface points and the space in between.
+Incident radiance at a surface point x through the Hemisphere  = (N (x)) defined by the normal N (x) is related to Irradiance as follows:
+
+E(x) = Li(x, i) cos idi,
+
+
+(4)
+
+where i is the angle between i and n(x). Expressed in terms of differential irradiance from a direction i this equation becomes:
+
+dE(x, i) = Li(x, i) cos idi.
+
+(5)
+
+2.1.5 Spectral radiance
+Spectral radiance (L or more explicitly L(x, , )) represents radiant flux per unit projected area per unit solid angle at a single wavelength. It has units W/(sr m3) and is related to radiance by
+
+L(x, ) = L(x, , ) d,
+
+
+(6)
+
+where  is a spectrum of wavelengths. In computer graphics the spectrum is usually a few discrete wavelengths (most often a RGB-triple), this reduces the integral above to a sum. Furthermore, it is usually assumed that light at one wavelength is not converted to another wavelength (i.e. no fluorescence), this makes it easy to treat wavelength dependency implicitly and simply work with three (or more) `radiances' to capture the spectral distribution of radiance.
+
+2.2 The bidirectional reflectance distribution function
+
+The bidirectional reflectance distribution function (BRDF) describes the re-
+
+lationship between incoming and reflected light. More formally, it is the
+
+ratio of the differential radiance reflected in an outgoing direction o to the
+
+differential irradiance incident from another direction i at a surface point
+
+x:
+
+fr(x, o, i)
+
+=
+
+dLo(x, o) dE(x, i)
+
+=
+
+dLo(x, o) . Li(x, i) cos idi
+
+(7)
+
+6
+
+2.2.1 The local reflectance integral
+
+More interesting than the differential radiance leaving a surface due to reflection of differential irradiance from a particular direction is the exitant radiance due to irradiance from all directions. This quantity is given by the local reflectance integral (or reflection equation):
+
+Lo(x, o) = fr(x, o, i) Li(x, i) cos idi.
+
+
+(8)
+
+This integral describes the appearance of a surface under a particular lighting
+
+condition and is one of the most important equations in computer graphics.
+
+Its core component, the BRDF, characterizes the reflectance properties of
+
+the surface independent of lighting conditions.
+
+2.2.2 Other important properties
+
+BRDFs can have further properties. Depending on the intended usage some may be more desireable than others. Here is a collection of the most important ones:
+
+Wavelength dependency: For most materials the BRDF will be a spectral term, i.e. light of different wavelengths will be reflected differently, giving the material a colored appearance.
+Reciprocity: Exchanging incoming and outgoing direction does not change the value of the BRDF:
+i, o   : fr(x, o, i) = fr(x, i, o).
+This property is also known as Helmholtz reciprocity or Helmholtz symmetry and especially important for physically-based rendering algorithms like bidirectional path tracing. Although the condition above seems quite logical and easy to fulfill there are some shading models that do not satisfy it (the famous Blinn-Phong model probably being the most popular).
+Energy conservation: To satisfy the law of energy conservation a BRDF must ensure that the amount of energy reflected from a surface point x is not greater than the amount of energy incident on that point. Expressed with radiometric quantities x : M (x)  E(x).5 Assuming a point x is illuminated by a single directional light from i it can be shown [8, p. 34] that this inequality holds if and only if:
+
+i   : fr(x, o, i) cos o do  1.
+
+5Assuming that Le(x) = 0, i.e. the surface is not emitting light.
+
+(9)
+
+7
+
+But that this just means `it does not go out more than goes in', while conservation of energy in the physical sense means that no energy is created or lost. Some BRDFs are energy-conserving by Eq. 9, but still not physically plausible because they `lose' energy at some angles (i.e. absorption becomes unplausibly high, e.g. with the modified (Blinn)Phong models at grazing angles). Again this property is most important for physically-based rendering algorithms that compute multiple bounces of light (e.g. Radiosity). But even in environments where it is not (algorithmically) necessary to fulfill this condition it should not be violated excessively because it helps to make things look more `natural'. In fact there is a trend towards physically-based shading even in areas where photorealism is not the primary objective like games and (animated) films.
+Anisotropy: If a BRDF is rotationally symmetric with respect to the surface normal, it depends only on the elevation components of i and o, i and o, and on the difference between the azimuthal angles, |i - o|. Such BRDFs are called isotropic. BRDFs that change their value as the surface is rotated around the surface normal are called anisotropic. Some materials exhibit anisotropic reflection, e.g. the often cited brushed metal.
+Practical parametrization: Well designed BRDFs usually only need a small number of parameters to define the appearance of a surface. The meaning of `practical' here heavily depends on the context. Some applications may prefer or even require parameters based on physical derivations or measurements. In other fields intuitive parameters that are easy to tweak are more desirable. Most applications in real-time rendering fall into the second category.
+Computational efficiency: This point addresses the question of how much resources (time and memory) are needed to calculate the value of a BRDF and what you get for your investment. With raster graphics running on a GPU BRDFs are typically evaluated per pixel. Because there are generally a lot of pixels to be shaded and because of the architecture of modern GPUs (they are essentially stream processors that (try to) keep several fragments `in-fly'), small changes can have a huge impact on performance.
+Specialization: Some BRDFs attempt to capture the appearance of many different materials, while others are more specialized and focus on modeling the reflection from a particular kind of surface. There are many possible classification schemes ­ probably the most common one is to characterize BRDFs based on which kinds of `directional' reflections they are able to reproduce. The following terms will be used in
+8
+
+this article (increasingly directional): perfect diffuse, directional diffuse, glossy specular, perfect specular.
+2.2.3 Generalization
+The concept of the BRDF can easily be generalized to cover not only reflection but also transmission, and even re-emission of light at another position (subsurface-scattering). Although this article only deals with BRDFs, it is usually useful to know more about the context and terminology. Transmission is represented by the bidirectional transmission distribution function (BTDF). Usually one or more BRDFs and BTDFs are combined into the bidirectional scattering distribution function (BSDF) of a material. The BSDF is used to characterize the complete scattering process at a single point of the surface. If the material features a significant amount of subsurface light transport, the bidirectional scattering surface reflectance distribution function (BSSRDF) has to be used, since the assumption that light leaves the surface where it entered is no longer true. Snow and human skin are examples for such materials. For homogeneous media the term bidirectional subsurface scattering distribution function (BSSDF) is sometimes used. Modeling subsurface scattering is an interesting topic and has been an very active area of research recently. Notable contributions are Hanrahn & Krueger [10], Jensen et al. [12], and Donner et al. [7], to name a few. Another member of the reflectance distribution function zoo that has received much attention recently is the bidirectional texture function (BTF), that was introduced by Dana et al. [6]. To put it simple, the BTF can be seen as a spacially varying BRDF that contains an integrated amount of subsurface scattering and effects of the surface mesostructure like masking and self-shadowing. BTFs can be measured quite effeciently and are able to reproduce the appearance of real-world materials very closely in highquality real-time rendering applications. See [18] for details and pointers to literature.
+2.3 Fresnel reflectance
+Some shading models use Fresnel reflectance in their formulas. The Fresnel equations describe the amount of light is reflected and refracted at a perfectly smooth interface between two media.
+9
+
+2.3.1 The equations
+
+The equations stem from wave optics and polarization of light has to be considered. Key components of the Fresnel equations are the reflection coefficient (usually denoted Fr in computer graphics), which gives the fraction of incident light that is reflected and the transmission coefficient (Ft), which gives the fraction that is refracted. Only the reflection coefficient is used in this article. For parallel polarized light (p-polarized, the electric field oscillates in the plane of incidence) it is defined as:
+
+r = t cos i - i cos t . t cos i + i cos t
+
+(10)
+
+For perpendicular polarized light (s-polarized, electric field perpendicular to plane of incident) it is:
+
+r
+
+=
+
+i i
+
+cos i cos i
+
+- +
+
+t t
+
+cos t . cos t
+
+(11)
+
+Here i and t are the angles between the surface normal and the directions of the incident and transmitted beams, and i and t are the indices of refraction of the media on the incident and transmitted side of the surface.
+t can be eliminated from the equations using Snell's law, leaving etai, etat, and u = cos i the only parameters. Note that r and r describe the relationship between the amplitudes of the involved electric fields. To get
+from the coefficients of an electric field strength to coeffecients for an energy (or intensity, for that matter), you need to square them6. For unpolarized
+light the reflection coefficient is
+
+Fr =
+
+r
+
+2 + |r|2 . 2
+
+(12)
+
+The transmission coefficient is then
+
+Ft = 1 - Fr.
+
+(13)
+
+Things are complicated by the fact that the index of refraction in Equations 10 and 11 is actually a complex number  = n+ik, with n being the `classical' refractive index from geometric optics and k being a damping constant that specifies how an electromagnetic wave is attenuated as it propagates through the material7. For dielectrics like glass or air k can be assumed to be zero,
+
+6It is actually a bit more complicated, the exact relation is given by Poynting's theorem. 7Sometimes k is called attenuation index, extinction coefficient, or absorption coeffi-
+
+cient/constant. This can be a bit misleading, since the latter two terms usually refer to
+
+the
+
+
+
+in
+
+some
+
+exponential
+
+decay
+
+law
+
+of
+
+the
+
+form
+
+I
+
+=
+
+I0 exp (s),
+
+where
+
+=
+
+2k c
+
+is
+
+closely
+
+related to k but not k itself.
+
+10
+
+but conductors have non-zero k (typical metals have k  [2, 10] for visible light). Furthermore, n and k vary with wavelength and often only average values are known - if at all. The wavelength dependency reveals another interesting property of Fresnel reflectance: a color shift towards the color of light as the incident angle approaches /2. Further information and implementations for dielectrics and conductors can be found in [23].
+
+2.3.2 The approximations
+
+So the application of the equation for Fresnel reflectance in shading models is accompanied by two problems: First it is expensive to evaluate and second its parameters are often not known for real materials. Various authors have suggested approximations to the formulas above to overcome these problems.
+
+The following equation can help if (the spectral distributions of) n and k
+
+are unknown, but the spectral distribution of the Fresnel factor at normal
+
+incidence F0 is known8. Cook & Torrance [5] propose to set k = 0 to
+
+approximate n for a known F0:
+
+(n - 1)2 F0 = (n + 1)2
+
+
+
+ n = 1 + F0 .
+1 - F0
+
+(14)
+
+An approximation for k can be obtained by setting n = 1 (or some approximation if available) and applying the same procedure to the Fresnel reflectance for conductors (see [23, p. 423]).
+Schlick [27] has proposed two other approximations. One if n is known:
+
+(n - 1)2 + 4n(1 - u)5
+
+Fr(u) =
+
+(n + 1)2
+
+,
+
+(15)
+
+and an even simpler one if F0 is known: Fr(u) = F0 + (1 - F0)(1 - u)5.
+
+(16)
+
+The latter is the most widely used Fresnel term approximation in real-time rendering.
+
+Laza´nyi et al. [15] have extended Schlick's first formula to include the extinction coefficient for conductors:
+
+(n - 1)2 + 4n(1 - u)5 + k2
+
+Fr(u) =
+
+(n + 1)2 + k2
+
+.
+
+(17)
+
+8F0 can simply be thought of as the color of the material at normal incidence.
+
+11
+
+3 Popular shading models
+This section contains the meat of the article, the discussion of several shading models on the basis of implementations that run on modern consumer-grade graphics hardware. In order to improve the readability of both, the following discussion and the accompanying code, all models are described with the same set of symbols and implemented to fit into a small abstract framework.
+
+3.1 The test framework
+The local reflectance integral (Eq. 8) is expressed in terms of an integral over solid angles, which is suitable for physically-based global illumination algorithms that rely mostly on area light sources. However, the lights typically used in real-time computer graphics are idealized sources like point or directional lights, that subtend a solid angle of zero. Incident radiance from these lights is modeled using the Dirac delta function, which is defined as
+(x)dx = 1 and x = 0 : (x) = 0. From this it follows that
+
+f (y) (y - x) dy = f (x).
+
+(18)
+
+So the integral of a function f multiplied by a delta impulse centered at x is the function's value at x.
+By writing the incident radiance in Equation 8 as a sum of radiances from a number of idealized delta-distribution light sources
+
+Li(x, i) = L^j(i,j - o)
+j
+
+and using the linearity of the integral operator, the local reflectance integral itself becomes a sum:
+
+Lo(x, o) = fr(x, o, i,j) L^j cos i,j.
+j
+
+(19)
+
+This represents lights without distance-based attenuation. However, the (quadratic) fall-off usually used to model the decrease in occupied solid angle that area light sources would exhibit can be easily be incorporated into L^ prior to the evaluation of local reflectance.
+The following discussion will only consider illumination from one direction, so it is more convenient to use the default notation depicted in figure 1. This figure introduces a local orthonormal coordinate system centered at a point P where the reflection is to be computed. N is the surface normal at P , T and B are the primary and secondary tangents. L is a unit vector pointing
+
+12
+
+N L H
+V o i P
+
+B
+
+T
+Figure 1: The geometry of reflection
+
+in the direction of the light, V is a unit direction vector pointing towards the view position, and H is the unit angular bisector of them9. Finally, I will
+substitute the absolute radiometric quantity L with some abstract Intensity I that takes values approximately in the range [0, 1].10 So Equation 8 can
+be rewritten once again:
+
+Io(P, V ) = Ii · N, L · fr(P, V, L),
+
+(20)
+
+where N, L denotes the inner (dot) product of N and L. In order not to burden notation I will not explicitly clamp the dot products to [0, 1] in the following discussion, but implicitly assume that L and V lie in the `upper' hemisphere defined by the surface normal N .
+
+Usually the BRDF of a shading model is a linear combination of a diffuse (Jd) and a glossy specular (Js) part. To fake the effects of indirect lighting an ambient part (Ja) reacting on an ambient intensity Ia is introduced. By incorporating these into Equation 20 we arrive at the final (I promise!) formula for local reflection:
+
+Io = Ii · N, L · (ksJs + kdJd) + IakaJa.
+
+(21)
+
+Ja is usually simply the (diffuse) material color, so the only thing that changes from shading model to shading model is how Js and Jd and their
+9H is the normal of a hypothetical ideal specular surface that would reflect all light from a light source in direction L to a viewer in direction V .
+10Not be confused with radiant intensity that is often used in physically-based rendering systems to characterize the strength of point light sources.
+
+13
+
+respective weights ks and kd are computed or adjusted. If a shading model contains no explicit ambient term, Ia is implicitly set to zero in the following subsections.
+
+3.2 Lambert
+
+The simplest model in this survey is Lambert's model for perfect diffuse
+
+reflection. It describes surfaces that scatter incident light uniformly in all
+
+directions (also called Lambertian surfaces). Such surfaces obey Lambert's
+
+cosine law, which states that the exitant radiance observed from all direc-
+
+tions of the hemisphere (n) is directly proportional to cos i (and not dependent on the outgoing direction). The constant of proportionality in this
+
+relationship is called diffuse reflectance (d, also called surface albedo) and is generally dependent on wavelength. In order to ensure energy conservation (Eq. 9), physically-based rendering approaches typically need d  [0, 1] and introduce a normalization factor of 1/. Thus, the BRDF is constant at a
+
+surface point x:
+
+fr(x, o, i)
+
+=
+
+d(x) . 
+
+(22)
+
+In real-time rendering d/ is usually simply substituted by a diffuse color (Cd), so the normalization factor 1/ is dropped.11 Using Cd also has the
+benefit that a surface illuminated from normal incidence (cos i = N, L =
+1) by a light source with I = 1 displays exactly the color Cd. A fact which
+helps a lot when painting textures or specifying vertex colors.
+
+To fit the model to the test-framework (Eq. 21) the following settings must be used:
+kd = 1, ks = 0, Jd = Cd, Js = 0.
+
+When simplified, this yields the familiar formula:
+
+Io = Ii · N, L · Cd.
+
+(23)
+
+Note that (in contrast to what many think) the cosine factor ( N, L ) is not part of the Lambertian BRDF ­ it is a geometric factor from the reflectance equation.
+Lambert's model is often not used as a stand-alone model, but as a cheap diffuse component of other shading models that concentrate on modeling (glossy) specular reflection. It is efficient, easy to parametrize (the only parameter is the diffuse color Cd), and captures the appearance of many diffuse materials well enough for most real-time graphics applications.
+11Maybe there's a more scientific explanation, but I usually justify it this way. As long as only single bounces of light are considered and an abstract intensity I is used to characterize light sources, one can alternatively assume that every light source has implicitly an intensity I = I , so the factor 1/ is canceled out.
+
+14
+
+3.3 Phong
+
+The Phong model introduced in [24] is a phenomenological light reflection model that is very popular because it models glossy specular reflection and is still very cheap and easy to use. It uses the cosine of the angle  between o and the direction of perfect specular reflection R = 2 N, i N -i raised to a power e. Large exponents form a tight specular lobe, while small exponents cause a broader lobe. Phong's original model also cancels out the cos i factor of the local reflectance integral. The BRDF is:
+
+cose  fr(x, o, i) = ksCs cos i + kdCd,
+
+(24)
+
+where Cs is a specular color analogous to Cd.12 The original model sets the color of the specular highlight to the color of the incident light (so Cs = 1), which creates the synthetic, plastic-like look that the Phong model is often criticized for. This is because a typical plastic has a transparent substrate with embedded color particles. So the light reflected specularly at the surface mostly retains its color, while the light that penetrates into the surface is likely to be reflected multiple times at the color particles, resulting in a mostly diffuse, colored reflection. But today the model is usually used in the form given above, with a separate specular color.
+
+Written with the vectors of figure 1 the model takes the more familiar form:
+
+Io = Ii (ksCs V, R e + N, L kdCd) .
+
+(25)
+
+So the values for Equation 21 are:
+
+V, R e Js = Cs N, L ,
+
+Jd = Cd,
+
+ks + kd  1.
+
+3.3.1 Blinn-Phong
+
+Blinn [4] suggested a way to avoid the computation of R. The Blinn-Phong
+
+model uses the halfway-vector H =
+
+V +L V +L
+
+instead:
+
+Io = Ii (ksCs N, H e + N, L kdCd) .
+
+(26)
+
+This is not equivalent to the original Phong model, but can be computationally more efficient. Looking at the formulas, the expression to calculate H looks shorter than the formula for R, but it has to be noted that the former contains a reciprocal square root, while the latter only uses basic vector arithmetic. If, however, a further simplification to the scenario is made by
+12Some people include the colors in the constants ks and kd, but I like them as scalars just adjusting the weights of the diffuse, specular and ambient components.
+
+15
+
+assuming that V and L are constant (viewer and light source infinitely far away), H only has to be calculated once per light, while R depends on N and thus has to be calculated once per surface point. As a rule of thumb the exponent for the Blinn-Phong model should be four times as big as that of the Phong model to get similar results.
+It should also be noted that the N, H e-distribution is physically grounded in microfacet theory (Sec. 3.4). It creates an elongated highlight at grazing angles that fits most real materials better than the original Phong term ??.
+
+3.3.2 Modified (Blinn-)Phong
+
+Dividing by N, L has two problems. Firstly, it destroys Helmholtz reciprocity. Secondly, hard transitions between very bright and very dark pixels are possible at silhouette edges viewed from grazing angles (especially with low ambient light and per-pixel lighting). The modified (Blinn-)Phong model drops the division and does not suffer from these problems, although its behavior near grazing is not really more realistic ­ the failure is just less objectionable visually. The formula is:
+
+Io = Ii N, L (ksCs V, R e + kdCd) .
+
+(27)
+
+or (Blinn-Phong):
+
+Io = Ii N, L (ksCs N, H e + kdCd) .
+
+(28)
+
+The Phong variants modified in this way are sometimes referred to as the reciprocal (Blinn-)Phong models.
+
+Figure 2 shows a comparison of all three Phong variants presented so far.
+
+It should be noted that none these models is energy conserving. Lewis [16]
+
+derived an energy conserving BRDF based on the modified Blinn-Phong
+
+model, but the introduced normalization constant destroys reciprocity. In
+
+order to make the specular lobe of the modified Phong model energy con-
+
+serving
+
+ks
+
+
+
+e+2 2
+
+must
+
+hold
+
+[13].
+
+The
+
+constant
+
+for
+
+the
+
+Blinn-Phong
+
+model
+
+is
+
+given
+
+as
+
+ks
+
+
+
+e+8 8
+
+in
+
+[1],
+
+but
+
+the
+
+internet
+
+debates
+
+on
+
+whether
+
+or
+
+not
+
+this
+
+is correct.13
+
+3.3.3 Max-Phong
+As described in the preceding paragraph, the modified Phong model attenuates specular reflection with increasing angle of incidence. This does not capture the appearance of some materials correctly ­ in fact many materials, e.g. smooth metallic surfaces, exhibit the exact opposite behavior. A
+13See e.g. this nice blog post: http://www.thetenthplanet.de/archives/255.
+16
+
+Figure 2: A plastic duck lit from behind reveals subtle differences between the original Phong model (left), the Blinn-Phong model (middle), and the modified Blinn-Phong model (right).
+
+variant of the Phong model that captures this effect better, while preserving reciprocity, is the max-Phong model [19].
+
+Instead of dividing by N, L , like the original Phong model does, the max-
+
+Phong model uses max ( N, L , N, V ). So the full equation for the specular
+
+term is:
+
+V, R e
+
+Js = Cs max ( N, L ,
+
+N, V
+
+. )
+
+(29)
+
+The authors also describe anisotropic and retroreflective variants of the MaxPhong model.
+The variants of the Phong model have been very popular in real-time computer graphics. They are efficient, easy to parametrize, and ­ at least the version with a separate specular color ­ are able to capture the appearance of many real-world materials to a satisfying degree. But they lack some important effects that the specular reflections from real-world materials exhibit and that can greatly increase the perceived realism of renderings.14
+
+3.4 Oren-Nayar
+The Oren-Nayar diffuse model presented in [22] is the first physically-based analytical reflection model discussed in this article. Oren & Nayar found that Lambert's model does not capture the scattering behavior of very rough surfaces very accurately. As stated earlier, at a Lambertian surface light is scattered uniformly in all directions. But for rough surfaces like clay,
+14Some of these effects will be described in the discussion of the Cook-Torrance model later in this article.
+17
+
+plaster, sand, and cloth an increase in reflected radiance is observed when the viewing direction approaches the direction of incidence (retroreflection).
+The Oren-Nayar model belongs to the family of microfacet models, that treat surfaces as a collection of microscopic facets (see fig. 3). The macroscopic optical properties of a surface are then analytically derived from properties of individual facets and statistical distributions of such properties. Oren & Nayar use the microfacet-based roughness model proposed by Torrance & Sparrow [32]. A good modern reference on microfacet-based BRDFs is [33].
+The Oren-Nayar model is based on the following assumptions:
+· The surface is composed of long, symmetric V-cavities, each consisting of two opposing facets. (So interreflection only occurs between two adjacent facets of the same cavity, see fig. 3.)
+· The width of each facet is much smaller than its length.
+· The area of each facet is much larger than the wavelength of the incident light. (So geometric optics can be used.)
+· The area of each facet is much smaller than the area of the surface that is projected onto one pixel. (So each pixel covers enough facets to describe surface properties by statistical distributions.)
+· All facets are Lambertian surfaces with the same diffuse reflectance.
+
+3.4.1 The analytical model
+
+The derivation of the model could easily fill another article, so only the most important equations and effects they model will be explained here. Details can be found in [22] and, in more depth, in [21].
+
+We will start with the definition of a BRDF (Eq. 7), `unpacking' it step by
+
+step:
+
+fr(x, o, i)
+
+=
+
+dLo(x, o) . Li(x, i) cos idi
+
+(30)
+
+Lo(x, o) in the Oren-Nayar model consist of two components: Lr(1) which is reflected radiance due to direct illumination (one bounce), and L(r2) which is reflected radiance due to interreflection at microfacets (only two bounces are considered in the model): Lo = Lr(1) + L(r2). Each of the two components is expressed in terms of a slope area distribution P and a reflected projected
+radiance Lrp. P () gives the fraction of the surface area that is occupied
+
+18
+
+AN
+
+V -L
+
+V
+
+-L
+
+V -L
+
+Figure 3: Microfacet geometry. Upper left: Surface composed of microfacets. Upper right: Single V-cavity with normal A. Bottom row: Interaction between microfacets, from left to right: interreflection, masking, shadowing.
+
+with facets with normal , and Lrp() gives the reflected radiance due to facets facing in direction  (details see [21]). The relationship is:
+
+L(ri) = P ()L(rip)() d, i = 1, 2.
+
+
+(31)
+
+The distribution P () can theoretically be any probability density function, but usually a simple Gaussian with zero mean and standard deviation  is used. Since Gaussians are rotationally symmetric this models an isotropic surface with `roughness' . Note that  is the standard deviation of the angle between microfacet normals and the surface normal. So  = 0 (all facets facing `upwards') should yield a perfect diffuse reflector ­ and indeed the Oren-Nayar model reduces to Lambert's model in this case.
+
+The definitions of L(rip) hold the meat of the model. Only the direct component will be discussed here, because it contains some factors that are also used by other microfacet-based models and helps to understand the reasoning behind them. Since the parameter  of Lrp is actually the normal of a fraction of the microfacets (see fig. 3), it makes sense to use the symbol A from now on. The projected radiance due to direct illuminations of facets with normal A is:
+
+Lr(1p)(A)
+
+=
+
+d 
+
+E0
+
+L, A A, N
+
+V, A V, N
+
+G(L, V, A).
+
+(32)
+
+19
+
+Here, E0 is the irradiance of a facet at normal incidence (A = L), d is the diffuse reflectance of each facet, and G is the geometric attenuation factor defined as:
+
+L, N A, N V, N A, N
+
+G(L, V, A) = min 1, max 0, 2
+
+,2
+
+L, A V, A
+
+. (33)
+
+G  [0, 1] models the geometric effects shadowing (term containing L) and
+masking (term containing V ) between microfacets that occur at larger angles of incidence or reflection.15
+
+Unfortunately, the integrals given by Equation 31 cannot be easily evaluated. So Oren & Nayar also provided a simplified `qualitative model', that captures most of the characteristics of the analytical model (but lacks, for example, the interreflection component).
+
+3.4.2 The qualitative model
+
+This is the form in which the Oren-Nayar model is usually implemented:
+
+fr (x,
+
+oi)
+
+=
+
+d 
+
+(A
+
++
+
+B
+
+·
+
+max (0,
+
+cos
+
+i
+
+-
+
+o)
+
+·
+
+sin 
+
+tan
+
+)
+
+,
+
+(34)
+
+with
+
+A
+
+=
+
+1
+
+-
+
+1 2
+
+(2
+
+2 + 0.33)
+
+2 B = 0.45 2 + 0.09
+
+ = max(i, o),  = min(i, o).
+
+Expressed with the terms of Equation 21:
+
+Jd = Cd A + B · max (0, V , L ) · sin  tan  ,
+where V and L are the projections of V and L onto the tangent plane (defined by N and P ). Since only diffuse reflectance is modeled:
+
+ks = 0, kd = 1.
+
+Like the analytical model, the qualitative model reduces to Lambert's model if  = 0. Note also that, if  is constant (for an object), A and B can be precomputed. But, for example, if  is given by a texture, A and B have to be recomputed for every evaluation of the model. This, and the fact that the trigonometric functions on  and  cannot be easily avoided, make the Oren-Nayar model quite expensive.
+15This geometric attenuation factor is a rather crude approximation and first-derivative discontinuous. An alternative factor developed by Smith [29] is used by He et al. [11] in their shading model.
+
+20
+
+Figure 4: Lambert's model (left) compared to the Oren-Nayar diffuse model for a rough surface ( = 0.9).
+Figure 4 shows a comparison between Lambertian and Oren-Nayar shading. The diffuse model of Oren & Nayar is closer to physical reality than Lambert's model, but the increase in realism comes at a dear price. Also (from my experiences) the gain in quality is hardly noticeable for moderately rough surfaces when working with well-painted textures. Therefore many real-time applications may not want to invest the necessary resources for a more realistic diffuse term. Especially if one considers that it needs an additional parameter (surface roughness). However, one scenario where the model might by applicable is for uniformly rough, diffuse only, (almost) mono-colored materials, like curtains or clay. In this scenario A and B can be precomputed as mentioned above and because of the monotone coloring the improved diffuse shading really comes to shine.
+3.5 Cook-Torrance
+The Cook-Torrance model [5] is a physically-based microfacet model that is focused on (glossy) specular reflection. Like the Oren-Nayar model, it uses the surface roughness model developed by Torrance & Sparrow [32] (which is why it is sometimes called Torrance-Sparrow model). The fundamental difference is that each microfacet is considered to be a perfect specular reflector (whereas in Oren-Nayar it was a perfect diffuse one). This has two important implications. Firstly, only facets facing in direction of the halfway vector H = h contribute to the BRDF. Secondly, the reflection from each individual facet can be described by the Fresnel equations. The facet slope distribution function D() represents the fraction of the facets oriented in direction . Note that this is slightly different from the slope area distribu-
+21
+
+tion used by Oren &Nayar ­ D yields a fraction of the total number, while P yields a fraction of the area (see [22] on how both are related). Cook & Torrance also included the geometric attenuation factor G to account for masking and shadowing of microfacets (interreflection is assumed to be handled by the diffuse term).
+
+The BRDF is:
+
+fr (x,
+
+o,
+
+i)
+
+=
+
+ks
+
+1 4
+
+F (cos
+
+h)D(h)G(i, N, i N, o
+
+o,
+
+h)
+
++
+
+kdJd.
+
+(35)
+
+The specifics of the diffuse term Jd are left open in the original paper. Any model for diffuse reflection could be used, but the Oren-Nayar model seems very appropriate, since it is also micro-facet based. For the Fresnel factor F the exact formula can be used, or, e.g. if parameters are missing, one of the approximations given in Section 2.3. What remains is the facet slope distribution D.
+
+One possibility is to use a Gaussian for D. The following function (among others) was considered by Blinn in [4]:
+
+D() = c · exp
+
+-
+
+2 m2
+
+,
+
+(36)
+
+where c is a constant controlling the magnitude of the specular lobe,  is the angle between surface and facet normal, and m is the root mean square slope of microfacets parameterizing the surface's roughness.
+
+Another function proposed by Blinn is derived from the Blinn-Phong model:
+
+D(H) = e + 2 N, H e. 2
+
+(37)
+
+Most commonly used, however, is the Beckmann distribution function. It is based on physical theory on scattering of electromagnetic waves and does not require the introduction of arbitrary constants. The formula is:
+
+1 D() = m2 cos4  exp
+
+-
+
+tan2 m2
+
+.
+
+(38)
+
+An anisotropic distribution based on the Blinn-Phong model was proposed by Ashikhmin & Shirley in [3]. It uses two exponents, eT and eB. They can be regarded as the lengths of the two major axes of an ellipse, with the directions of the axes being T and B. The radius of the ellipse in direction of the projection of  onto the tangent plane indicates the exponent to be used. If the projection is co-linear with T , eT is used, if it is co-linear with B, eB is used, intermediate values are obtained by `walking' on the ellipse. The distribution is given by:
+
+D() = (eT + 1)(eB + 1)(cos )eT cos2 +eB sin2 .
+
+(39)
+
+22
+
+Figure 5: The Cook-Torrance model with the approximate parameters for gold. Left: m = 0.35, right: m = 0.1.
+
+The paper by Cook & Torrance also contains an explicit definition for an
+
+ambient term, Ja, based on ambient occlusion. It assumes the ambient illumination is uniformly incident and integrates it over the unoccluded fraction
+
+of the hemisphere:
+
+Ja = Ca ·
+
+v() cos i d, 
+
+(40)
+
+where v() is the visibility function, that returns 1 if the direction  is
+
+unblocked and 0 otherwise. Ca is a color for the ambient reflectance. In real-time rendering systems the integral will typically be either precomputed
+
+or is simply assumed to be one (no occlusion).
+
+Using the terms of Equation 21 the Cook-Torrance model can be compactly written as:
+Io = Ii · N, L · (ksJs + kdJd) + IakaJa,
+
+with
+
+1 F ( V, H )D(H)G(L, V, H)
+
+Js = 4
+
+N, L N, V
+
+,
+
+Jd = yourchoice, Ja = yourchoice.
+
+ks + kd  1, ka  [0, 1]
+
+The Cook-Torrance model provides a good reproduction of the appearance of many real materials ­ if parameters are available. Especially metallic surfaces profit from the increased realism of the specular factor (see fig. 5). Effects like the characteristic color shift towards the color of the incident light near grazing angles and the off-specular peak for very rough surfaces greatly improve the perceived realism of renderings. Another advantage is its modular structure that allows to easily replace components with more
+
+23
+
+accurate or more efficient versions. The main disadvantage is the high computational cost. If one is willing to trade arithmetical instructions for bandwidth, some components like D or F can be precomputed and stored in a texture, though.
+
+3.6 Ashikhmin-Shirley
+
+Ashikhmin & Shirley proposed an anisotropic shading model in [2] that has several desirable properties for real-time rendering. It has intuitive parameters, is anisotropic, conserves energy, is reciprocal, has a non-Lambertian diffuse term, and ­ most important ­ is quite efficient to compute (considering the implemented features).
+The model is based on the facet slope distribution function introduced in the discussion of the Cook-Torrance model (Eq. 39). The BRDF consists of a specular and a diffuse part:
+
+fr(x, o, i) = fs + fd,
+
+(41)
+
+with fs =
+
+(eT + 1)(eB + 1) 8
+
+N, H eT cos2 h+eB sin2 h V, H · max ( N, L , N, V
+
+) Fr( V, H
+
+, s)
+
+and
+
+fd
+
+=
+
+28d (1 23
+
+-
+
+s)
+
+1-
+
+1 - N, V 2
+
+5
+
+1 - 1 - N, L
+
+5
+.
+
+2
+
+Note that fs is very similar to the Cook-Torrance model if we factor the microfacet distribution out:
+1 D(H) fs = 8 V, H · max ( N, L , N, V ) Fr( V, H , s).
+
+Therefore I look at the specular part of Ashikhmin-Shirley as a CookTorrance with simpler geometric (masking/shadowing) term.
+The Fresnel term used is Schlick's approximation with the specular reflectance s as the spectral distribution at normal incidence F0:
+
+Fr(u, s) = s + (1 - s)(1 - u)5.
+
+(42)
+
+Note that with this approximation the whole model depends solely on the two colors Cd = d/ and Cs = rhos and the two exponents eT and eB. The strange leading constants and diffuse term are designed to ensure energy conservation. If energy conservation is not important and a small decrease
+
+24
+
+in quality is acceptable, the diffuse component can be replaced by Lambert's model to save some computation time.
+
+The terms needed to embed this model into the test framework (Eq. 21) are:16
+
+Js =
+
+eT H,T 2+eB H,B 2
+
+(eT + 1)(eB + 1) 8
+
+N, H
+
+1- H,N 2
+
+V, H · max ( N, L , N, V
+
+) Fr( V, H
+
+, Cs),
+
+Jd
+
+=
+
+28 23 Cd(1
+
+-
+
+Cs)
+
+1-
+
+1 - N, V 2
+
+5
+
+1 - 1 - N, L
+
+5
+,
+
+2
+
+and ks = 1, kd = 1.
+
+If both exponents are equal (eT = eB =: e) Equation 41 the specular component can be simplified to arrive at a isotropic version of the model. Here is the resulting formula, incorporated into Equation 21:
+
+Io = Ii · N, L · (ksJs + kdJd) ,
+
+with
+
+e+1
+
+N, H e
+
+Js = 8 V, H · max ( N, L , N, V ) Fr( V, H , Cs),
+
+Jd
+
+=
+
+28 23 Cd(1
+
+-
+
+Cs)
+
+1-
+
+1 - N, V 2
+
+5
+
+1 - 1 - N, L
+
+5
+,
+
+2
+
+ks = 1, kd = 1.
+
+The Ashikhmin-Shirley model is an anisotropic BRDF with compact parametrization. Its specular term provides a quality comparable to that of the CookTorrance model at lower costs (although the anisotropic version is quite expensive for today's GPU-standards). The Fresnel term and the dot products in the denominator cause an increased reflection and the characteristic color shift near grazing (see fig. 6). It also has a non-Lambertian diffuse term, but for many real-time applications a Lambertian diffuse term might suffice17. A feature that is ambivalent with regard to parameter tweaking is that the specular color attenuates the diffuse term. While such an attenuation effect in small doses is physically plausible, it makes it hard to balance the colors for a particular overall appearance. (Especially if Cs has a color and luminance comparable to Cd it can seriously mess up the diffuse term.) This may impair acceptance of the model by artists.
+16Trigonometric functions were replaced by vector algebra. 17This will destroy energy conservation, though.
+
+25
+
+Figure 6: The Ashikhmin-Shirley model from different viewing points. Note the color shift in specular reflection and the view-dependent diffuse term. Top row: eT = eB = 128, bottom row: eT = eB = 32.
+
+3.7 Ward
+
+In [34] Ward proposed an empirical anisotropic shading model. It is designed to reproduce the appearance of a wide range of (anisotropic) materials with a small and intuitive set of parameters. Although loosely based on microfacet theory, it lacks most of the factors that typically appear in this kind of models. For example, the geometric attenuation factor and the Fresnel term are dropped in favor of a single normalization factor. Still the model is energy conserving and reciprocal.
+
+For discussion of the parameters we will use the isotropic model. The BRDF
+
+is:
+
+fr(x, o, i) =
+
+d 
+
++
+
+s
+
+ cos
+
+1 i
+
+cos
+
+o
+
+exp
+
+-
+
+tan2 h 2
+
+42
+
+.
+
+(43)
+
+The Parameters used are two spectral reflectance factors, d and s, that control the color of the diffuse and specular reflection, and the standard
+
+deviation of microfacet slope, , that models surface roughness like for other
+
+microfacet-based models. As can be seen, the Ward model uses a Gaussian
+
+distribution similar to the Beckmann distribution to shape its specular lobe.
+
+The
+
+normalization
+
+factor
+
+1 42
+
+is
+
+valid
+
+as
+
+long
+
+as
+
+the
+
+surface
+
+isn't
+
+too
+
+diffuse
+
+( 0.2). For increasingly diffuse surfaces s should gradually approach
+
+zero, in order not to jeopardize energy conservation.
+
+26
+
+To get rid of the tangent in the exponential function the trigonometric iden-
+
+tity tan  =
+
+±
+
+1-cos  cos 
+
+can be used.
+
+Replacing tan2 h with a term consisting
+
+only of dot products yields the terms needed for Equation 21:
+
+Io = Ii · N, L · (ksJs + kdJd) ,
+
+with
+
+1 1 N, H 2 - 1 Js = Cs N, L N, V 42 exp N, H 2 .
+
+Jd = Cd, ks = 1, kd = 1.
+
+Note that the two dot products in the denominator can cause numerical problems for angles near or greater than 90 degrees. Especially if N, L  0 artifacts develop. The Ashikhmin-Shirley model avoids this by using max ( N, L , N, V ). But this term's first derivative is discontinuous which can result in a visible `shadowing ramp' when one term `takes over' from the other.
+
+The anisotropic Ward model simply splits the surface roughness  into two parameters, T and B, that represent the standard deviation of microfacet slope in directions T and B. T and B are coupled by the same elliptical relationship used in the anisotropic slope distribution function of Ashikhmin & Shirley (Eq. 39). The BRDF is:
+
+fr(x, o, i)
+
+=
+
+d 
+
++
+
+s
+
+ cos
+
+1 i
+
+cos
+
+o
+
+exp
+
+- tan2 h ·
+
+cos2 h T2
+
++
+
+sin2 h B2
+
+4T B
+
+. (44)
+
+For efficient calculation Ward proposed the following formula, which has all trigonometric functions substituted by vector operations. The equation was embedded into the test-framework used throughout this article (Eq. 21):
+
+Io = Ii · N, L · (ksJs + kdJd) ,
+
+with
+
+Js = Cs
+
+1
+
+1
+
+ exp-2
+
+H,T T2
+
+2
+
++
+
+H,B 2  B2 ,
+
+N, L N, V 4T B
+
+1 + N, H
+
+Jd = Cd, ks = 1, kd = 1.
+The Ward model is an efficient anisotropic BRDF that captures the appearance of many real materials reasonably well. It provides an increase in specular reflection near grazing, but lacks a Fresnel term to model the characteristic color shift. It is also interesting for the fact that it uses a Gaussian
+
+27
+
+Figure 7: A sphere shaded with increasing levels of anisotropy. Top row: Ashikhmin-Shirley model, bottom row: Ward model.
+to shape its specular lobe. Of course the exact shape depends on additional parameters, not just the function used, but Gaussian lobes tend to give a specular highlight with smoother fall-off. Using an exponential function may also result in increased performance, since it is a native function on GPUs, while pow(a, x) is usually implemented as exp(x log a).18 But in this case the calculations to get the exponent seem to eat away that benefit.
+3.8 Lafortune
+The Lafortune model introduced in [14] is another empirical model designed to fit measured BRDF data to a set of easy to calculate basis functions. The model uses a Lambertian diffuse term together with a specular term that is a sum of cosine lobes. Each cosine lobe is parametrized by two parameters: an orientation vector oj and a Phong exponent ej. The orientation vector includes a scaling factor for the lobe, so it usually has not unit length. As the name suggests, the orientation vector orients the cosine lobe ­ but in a slightly unintuitive way. Note that for the following discussion, all directions are assumed to be specified in local coordinates (i.e. in the canonical tangent frame (T, B, N )). In the Lafortune model a cosine lobe is oriented by multiplying the direction of incidence component-wise with oj. This modified direction is then used in a dot product with the outgoing direction to get the cosine. Let denote component-wise multiplication of vectors, then the Lafortune
+18Although I'm not sure this is still true for the newest generation of GPUs.
+28
+
+model for m lobes has the following BRDF:
+
+fr(x, o,
+
+i)
+
+=
+
+kd
+
+d 
+
++
+
+ks
+
+m
+
+o, oj
+
+j=1
+
+i ej .
+
+(45)
+
+The scaling factor in oj affects the magnitude of the dot product and thus implicitly weights the j-th lobe. Note that m = 1 and o1 = (-1, -1, 1)T gives the original Phong model. The color of the specular reflection is also
+implicitly specified through the orientation vectors: There is actually one for
+each discrete wavelength in the rendering system (3 for RGB-based systems).
+
+The terms for Equation 21 are:
+m
+Js = V, oj
+j=1
+
+L ej ,
+
+Jd = Cd,
+
+ks + kd  1.
+
+The Lafortune model is easy to implement and results in quite realistic images for materials where measured data is available. (Although other models tend to fit data equally well, sometimes better [20].) However, it relies on a large number of unintuitive parameters (three vectors and one scalar for each lobe). This, and the fact that it is computationally quite expensive for larger m, make it not very well-suited for interactive applications, or applications where content is primarily authored by artists with no access to measured BRDF data.
+
+3.9 Strauss
+
+Strauss proposed a phenomenological shading model in [31]. The goal was to reach a quality comparable to the Cook-Torrance model at lower computational costs and with an intuitive set of parameters. The parameters are smoothness s, metalness m, transparency t, and a material color C. Many terms in the model are interpolations of colors on the basis of these parameters. The BRDF also contains approximations for the Fresnel term and the geometric attenuation factor with some carefully tweaked constants. The formulas were found by excessive trials and tweaking and may look a bit strange at first, but a closer look will reveal the reasoning behind them.
+
+Here is the BRDF: 1
+fr(x, o, i) = rddC + N, L rsCs.
+
+(46)
+
+The first term represents diffuse reflection and is composed of the following
+
+components:
+
+rd = (1 - s3)(1 - t), d = 1 - ms.
+
+29
+
+So diffuse reflection decreases with increasing smoothness and transparency, and is also low for smooth metals.
+The second term is the specular reflection and its components are a bit more complicated. Note that, like the original Phong model, it cancels out the cosine factor of the local reflectance integral. Cs is the specular color and is interpolated between white (Cw) and the material color C based on metalness and Fresnel factor:
+
+Cs = Cw + m(1 - F (i))(C - Cw)
+
+rs contains a Phong lobe for the specular term. The exponent is based on
+
+smoothness:
+
+rs = rj V, R e,
+
+3 e = 1 - s.
+
+rj is the adjusted reflectivity that incorporates Fresnel and geometric attenuation effects:
+
+rj = min (1, rn + (rn + kj)j,
+
+kj = 0.1, rn = (1 - t) - rd,
+
+j = F (i)G(i)G(o)
+
+Note that the approximations F and G work on angles, not on their cosine:
+
+F () =
+
+1 (2/-kf )2
+
+-
+
+1 kf2
+
+1 (1-kf )2
+
+-
+
+1 kf2
+
+,
+
+G() =
+
+1 (1-kg )2
+
+-
+
+1 (2/-kg )2
+
+1 (1-kg )2
+
+-
+
+1 kg2
+
+,
+
+kf = 1.12, kg = 1.01.
+
+The equation for rj is laid out to let Fresnel and geometric attenuation terms dominate the appearance near grazing angles. This is also true if transparency t is one ­ presumably to be able to capture translucent, specularly reflecting materials like glass.
+Strauss also included an explicit ambient term:
+
+Ja = rdC.
+
+(47)
+
+This completes the terms we need for implementation (once again Eq. 21): 1
+Js = N, L rsCs, Jd = rddC, Ja = rdC, ks = 1, kd = 1, ka  [0, 1].
+The biggest plus of the Strauss model is its nice parametrization. It needs only one color and two scalar parameters (not counting transparency) to
+
+30
+
+control the appearance of a material. A negative aspect is that the model is computationally expensive. Especially the approximations for the Fresnel term and geometric attenuation factor contain many divisions and are not well-suited for graphics hardware. But if it is acceptable to store them in a texture for table look-up or replace them with cheaper approximations, the model becomes quite attractive for real-time rendering. A further point that may be objectionable is the fact that the diffuse reflectance is decreased as the smoothness increases. Like in the Ashikhmin-Shirley model this is a mixed blessing: On the one hand it is physically plausible, on the other hand it makes it hard for artists to paint the `right' colors into the texture.
+
+3.10 Schlick
+
+Another phenomenological model based on Cook & Torrance was developed by Schlick [26]. It uses Schlick's technique of rational fraction approximation to reduce computational expense. It is also interesting for the fact that it explicitly models surfaces consisting of two different types of layers. Usually a transparent, specularly reflecting layer is assumed to lie over an opaque, diffusely reflecting. Each layer has three parameters: a roughness factor r  [0, 1], an isotropy factor p  [0, 1], and a color C. The model also lacks the typical separation in diffuse and specular part, using only a unified expression for the individual layers. Furthermore, the model is designed to be tailored towards a specific usage, usually by treating accuracy for speed and vice versa.
+The rational fraction approximation employed by Schlick approximates arbitrary functions with rational functions. The basic formula for a doublelayered, anisotropic material is:
+
+fr(x, o, i) = [F D] + (1 - F ) F D ,
+
+(48)
+
+with F and D being the Fresnel and directional factors of the first layer (G is included in D for this model), and F and D that of the second layer.
+
+The Fresnel factor can either be a simple color, C, or, if the typical Fresnel color shift is desired, approximated with Schlick's formula (Eq. 16).
+
+D contains two rational functions, Z (representing zenith angle dependence),
+
+and A (representing azimuth angle dependence), and the geometric attenu-
+
+ation factor:
+
+1-G
+
+G
+
+D= A+
+
+Z A,
+
+ 4 N, L N, V
+
+(49)
+
+with
+
+rp
+
+Z= (1 + r
+
+N, H
+
+2-
+
+N, H
+
+2)2 ,
+
+A=
+
+p2 - p2 T, H 2 + T, H 2 ,
+
+31
+
+and
+
+N, L G = r - r N, L +
+
+N, L
+
+·
+
+r
+
+-
+
+r
+
+N, V N, V +
+
+N, V
+
+.
+
+For a derivation of these factors and more or less accurate alternatives see the original paper.
+
+The multi-layer approach and the lacking separation into a diffuse and specular part make it difficult to match this model into Equation 21 (at least when one is trying to maintain semantics). So I simply used:
+
+Js = [F D] + (1 - F ) F D , Jd = 0,
+
+ks = 1, kd = 0.
+
+The Schlick model is a simple, anisotropic model for (potentially) doublelayered materials. A drawback is that the rational functions used are expensive to evaluate on graphics hardware, because they contain many divisions and are susceptible to numerical problems. I also had problems with the parametrization. For single-layered materials the parameters are intuitive and easy to tweak, but with this version of the model only a limited number of materials can be accurately reproduced. Most materials will need the double-layered version, in which every parameter is present twice. The fact that both layers are not independent makes it quite hard to tweak the values for a specific appearance.
+
+3.11 Other interesting models
+There are some other shading models that I wanted to describe, but the length of this article is approaching 30 pages (which is already three times more than I had in mind when I started), so I will only include the reference to the paper and a very brief description here.
+
+3.11.1 D-BRDF
+Ashikhmin & Peroze [17] developed a BRDF model that is based on the Ashikmin-Shirley model but especially tailored to be fitted to measured data. The most important change is that the new model has a general lobe distribution p(H) instead of the (probably anisotropic) Blinn-Phong lobe of the original Ashikhmin-Shirley model (therefore it is usually called DBRDF). This distribution can be estimated with a simple fitting procedure based on the retroflection of real material samples. The distribution (a two dimensional function for anisotropic materials) can be tabulated into a texture allowing efficient evaluation of the model on graphics hardware.
+
+32
+
+3.11.2 Poulin-Fournier
+Poulin & Fournier [25] developed an interesting anisotropic reflection model. It uses small aligned cylinders that `pierce through' an otherwise smooth surface to model anisotropy. Two parameters are used to control the anisotropy of a surface: the distance between the centers of two adjacent cylinders and their elevation over the surface. The model also includes shadowing and hiding terms due to the cylinders.
+3.11.3 He-Sillion-Torrance-Greenberg
+He et al. [11] presented a physically-based general reflectance model. It can be seen as a further development of the Cook-Torrance model including some effects from wave optics like polarization. Apart from its fairly complex derivation, it is interesting for the fact that it includes three basic terms, instead of the usual two for specular and diffuse reflection. The model distinguishes between `ideal specular' (mirror-like reflection), `directional diffuse' (the `glossy specular' part in most other models), and `ideal diffuse' (Lambertian reflectance) ­ an interesting separation for ray-tracers. This model has inspired Schlick [27] to extend his model with a third term, too.
+3.11.4 Stam
+Stam [30] introduced a model that models wavelength-dependent effects like diffraction. Such effects are necessary to capture the appearance of materials that feature a microgeometry with regular structures that are not much larger than the wavelength of the incident light. CD-ROMs and some crystals are examples of such materials (they are basically diffraction gratings). An intersting fact is that some other physically-based models (like the HSTG-model described above) are limiting cases of Stam's model.
+3.11.5 Granier-Heidrich
+Granier & Heidrich [9] experimented with a simple layered shading model that attempts to capture some wavelength-dependent effects with a simple RGB spectrum representation. They take some interesting approaches, for example they model layer thickness with Perlin noise and include interference and color separation due to a wavelength-dependent index of refraction.
+33
+
+4 Yet another shading model
+In this section a `new' shading model is presented. `New' in quotation marks because it is not really new but a mere recombination of terms used in other shading models. All terms were changed slightly, though, usually trading accuracy for efficiency. The derivation of the model is in no way physicallybased. It should be seen as a empirical process with the goal to arrive at a phenomenological model whose balance of quality and speed make it attractive to a large number of real-time rendering applications.
+The model itself ­ like so many others ­ has its strengths and weaknesses. I am neither passing it off as the ultimate shading model nor as a great scientific achievement. It represents what I think is a reasonable compromise of realism and speed; and for some readers it may serve as a starting point to derive their own models from it.
+Update: This was written four years ago. I still like some of the ideas of the model presented here, but today I would probably rely even more on proven, physically-plausible models like Ashikhmin-Shirley and CookTorrance. This saves you some `cheating' factors you typically have to introduce with phenomenological models (and the annoying hours and days of tweaking them). I would not recommend the model for production use ­ there are just better alternatives available ­ but maybe it is still an interesting read.
+4.1 Requirements
+This sub-section briefly describes the key requirements I laid down for the model.
+Often even one object in a scene shows of a mixture of different surfaces like plastic, metal, and cloth. In order to improve batching and to obtain the ability to render such objects with one draw call, the model should be able to capture the appearance of such `run-of-the-mill' materials.19
+The previous point implies that the model must get its parameters perpixel, rather than per-object. This can be easily achieved by a texture of parameter values. On the other hand the model should not use too many textures, because most applications already have a large number of texturereads besides those needed for the core shading calculations. For example a shadow map may be sampled (probably multiple times), or an environment map, or a normal map for bump mapping, to name only the most common
+19Although, the newest generation of graphics APIs has reduced draw call costs. So, in the future, multiple draw calls with specialized (probably cheaper) shaders may become more attractive than one call with an (expensive) universal shader.
+34
+
+cases. Also, throughput of the core shader units of modern graphics boards increases faster than memory bandwidth20 ­ a further reason not to go over the top with texture sampling. Taking these facts into account the model should use as few textures as possible for its calculations, ideally only two: a color texture (with an alpha channel for alpha blending/test) and a parameter texture that holds the remaining surface properties. Especially no table look-up textures for complicated calculations should be necessary.
+Furthermore, the model should depend only on a few intuitive parameters. Few because the have to fit into two textures, intuitive to allow easy tweaking and authoring of these textures. It would also be beneficial if the model could work on parameters in the range [0,1], so they can be sampled from a texture and used directly, without applied linear or non-linear scaling.
+Of course the model should be computationally efficient. A fact that is often overlooked here, is that typically only a fraction of the instructions in a (pixel) shader is used for the core shading calculations. A huge amount of time is spend on sampling textures, calculating distance fog, doing a shadow test, calculating an alpha value for an exotic blending operation, etc. Also, the BRDF may have to be evaluated multiple times if more than one light source is present. So a shading model that looks fast enough on the paper often turns out to be too expensive in context of the concrete application.
+Another, less obvious property that I consider important for many realtime rendering applications is scalability. The differences in performance of consumer-grade graphics cards are huge and growing further. A shading model designed for this setting should be adaptable enough to provide a near-optimal balance of quality and speed on a wide range of graphics boards. Of course the parameter values and the overall appearance of a material should remain the same.
+4.2 The model
+The following paragraphs explain the components of the model, where they stem from, and the reasoning behind important design decisions.
+4.2.1 Parameters
+As was stated in the requirements, the model should depend on a few intuitive parameters in the range of [0,1].
+The first parameter of a phenomenological shading model almost inevitably is a material color (C). This is also true for the model presented here.
+20In modern games the ratio of arithmetic to texture instruction (also called arithmetic intensity) is typically around 6:1.
+35
+
+The model explicitly uses only a single color instead of two separate diffuse and specular colors. I like the approach of Strauss, where the specular color is interpolated between white (for a plastic-like look) and the material color (for a metal-like look). Although this gives away some flexibility, it saves a separate color texture and works well for many materials. In the style of the Strauss model the parameter that controls the specular color is called metalness (m).
+A second parameter is needed to control the size and intensity of the specular highlight. It is called smoothness (s). The smoother a material is the brighter and more focused is the specular reflection. I thought long about separating size from intensity to get more flexibility (models with a separate specular color can implicitly scale intensity by scaling the color), but this would introduce a further parameter that would occupy a further texture channel. Instead I decided to stick with the single smoothness parameter and allow a scaling of specular intensity ­ should it be necessary ­ per-object through a constant (like the Phong model does).
+Note that the parameter texture only needs two channels so far, one for smoothness and one for metalness. I intentionally reserved two channels for application-specific parameters. Examples of such parameters are things like an emissivity factor, a blending factor for an environment map, a primitive scratch map encoded in one channel, or a blending factor for player markings. Figure 8 shows how the parameters affect the appearance of an object.
+
+4.2.2 Diffuse term
+
+The model's diffuse term is based on a simple Lambertian term. NonLambertian terms can improve the appearance of very rough surfaces to some degree, but in real-time rendering scarce resources are better invested in enhancements of the specular term, as this is often percived as the dominant factor. A relatively cheap extension of this plain Lambertian term is to scale down diffuse reflection with increasing smoothness:
+
+Jd = C · (1 - sk),
+
+(50)
+
+where k  [0, 1] is a constant that specifies how much the term is scaled down in the worst case (s = 1). I experimented with this and finally chose to set k = 0 as a default. Although the downscaling makes the material look smoother with increasing smoothness (pun not intended), the diffuse parts no longer show the color painted into the color texture ­ a fact that complicates tweaking colors and smoothness. However, if that is not a problem and the effect is desired, k can be increased.
+
+36
+
+Figure 8: The ufo model rendered with different values for the smoothness and metalness parameters.
+37
+
+4.2.3 Specular term
+
+The specular lobe is formed based on the classical Blinn-Phong term. The exponent e is derived from the smoothness parameter in a similar way it is done in the Strauss model:
+
+e
+
+=
+
+1
+
++
+
+2
+1 255
+
+-
+
+s
+
+
+
+2 1.00392
+
+-
+
+. s
+
+The constants are chosen to let e vary from  512 (if s = 1) to  2 (if s = 0) and to avoid the singularity the Strauss model has for s = 1. An alternative I considered was the quadratic function e = 512s2, but this function has a steeper slope for smaller s and results in a harder, more focused highlight which I didn't like. I also tried several lobes based on the exponential function. They produced very smooth highlights, but the calculations to get the correct arguments were too expensive compared to the simple rational function given above.
+
+As stated in the sub-section about parameters, the specular color is interpolated between white and the material color C based on the metalness parameter. There are two further subtleties, however. First, taking simply the material color will scale down the specular highlight as the color gets darker. Although this effect may be desirable for some materials, I usually found it quite bothersome when tweaking colors. Therefore, the material color is scaled by its reciprocal luminance to compensate for a potential darkening. This also has the advantage that the perceived brightness of specular highlight from plastic and metal surfaces is roughly the same. On the other hand it may result in an overly bright highlight for some materials. In this case there is the option to reduce specular reflectance for the whole object, as described above. Second, a Fresnel term is included to reproduce the color shift that occurs when the material is illuminated from shallow angles. I used Schlick's approximation (Eq. 16).
+
+Expressed with equations the calculations for specular color Cs are:
+
+Cs = F ( V, H , F0),
+
+with F0 = (1 - m)1 + mC = mC - m + 1,
+
+and
+
+C
+
+C=
+
+.
+
+lum(C )
+
+Finally, a scaling factor is applied. This factor serves two purposes: First, it scales down the specular term with decreasing smoothness, and second,
+
+38
+
+Figure 9: Color shift in specular reflection caused by Fresnel term and scaling factor.
+
+it increases specular reflection near grazing, further adding to the Fresnel effect (Fig. 9). The scaling factor is:
+
+s2 c= .
+V, H
+
+(51)
+
+I experimented with different denominators based on the models of Ashikhmin & Shirley and Ward and found this to be the best compromise of quality and speed. It is not first-derivative discontinuous like that of Ashikhmin & Shirley and less likely to produce a division by (almost) zero like that of Ward (both can cause artifacts). Of course, these models need normalization constants that ensure energy conservation, while mine is more or less an arbitrary choice that gives the qualitative effect I wanted.
+Now the three parts of the specular component can be assembled:
+
+Js = c · Cs · N, H e.
+
+(52)
+
+4.2.4 Putting it together
+In order to have it all in one place, here is the complete model expressed in terms of Equation 21:
+Io = Ii · N, L · (ksJs + kdJd) ,
+
+39
+
+with
+
+Jd = C · (1 - sk), s2 2 Js = V, H · F ( V, H , F0) · N, H ,1.00392-s
+
+kd = 1, ks = 1, k = 0,
+
+and F0 as given above. Note that the values for kd, ks, and k are defaults and can be adjusted (per object) if necessary.
+
+The model as presented here is already stripped down to a few essential terms. Yet still may be too expensive for some GPUs and applications. Here are some suggestions on how to scale down the model step-by-step.
+
+First the Fresnel factor is quite expensive to calculate, even with Schlick's approximation. Luckily, it can be left out without loosing too much visual quality and Cs = F0 can be used.
+
+As a next step V, H in the denominator of the specular term can be removed. This attenuates the specular highlight for grazing angles and can have a rather heavy impact on appearance. On the other hand, it saves a division and ­ assuming that the Fresnel term already was removed ­ the dot product V, H .
+
+Furthermore, the scaling of C with its reciprocal luminance in the calculations for Cs can be omitted, saving another division and a dot product. By now we have arrived at a slightly modified Blinn-Phong model. Note that all terms, except the colors C and Cs, can be computed per vertex if necessary (and no bump-mapping or similar techniques are performed).
+
+If even this version is still to expensive, a last resort would be to simply throw away the whole specular term and only perform a Lambertian diffuse shading. Although you have to render a lot on a very crappy card to be forced to this step.
+
+4.2.5 Extending the model with environment mapping
+As stated in the previous sub-section, one of the free channels in the parameter map can be used blend in an environment map. This sub-section describes a modification of the diffuse term that allows environment mapping and integrates harmonically with the core parameters. Rather than simply combining the material color C and the looked-up environment color Ce via multiplication or addition into a diffuse color Cd, a more elaborate approach is taken here, that can considerably improve the quality of renderings. The parameter that blends in the environment map is called reflectivity (r  [0, 1]). However, the exact way in which this blending is done, depends on the other two parameters smoothness and metalness.
+40
+
+Figure 10: Smooth metal surfaces lit by two point lights.
+Smoothness controls how blurred the reflection appears. This is easily achieved by using a mip-map bias derived from smoothness in the texture look-up (with the instruction texCUBEbias). The part of metalness is slightly more complicated. For metals the reflection should adopt the material color, like the specular highlight does. So the reflected color is modulated by the material color in this case (fig. 10). For an ideal metal (m = 1) the diffuse color should be:
+Cr,metal = C · Ce.
+For plastics a Fresnel term can be used to create an interesting effect. Many (smooth) plastic-like materials show an increased mirror-like reflection when viewed from flat angles. This follows from the Fresnel equations when applied to materials that consist of color particles embedded in a transparent substrate (typical plastics) or that contain a diffuse reflector beneath a thin, transparent coating (e.g. finished wood). By using a Fresnel factor to linearly interpolate between C and Ce, this dependency on the viewing direction can be modeled quite effectively (see fig. 11):
+Cr,plastic = (1 - F ( N, V ))C + F ( N, V )Ce.
+41
+
+Figure 11: Blending in the environment map by an Fresnel term for plastics.
+
+The extremes Cd,metal and Cd,plastic are then combined based on the metalness parameter:
+Cr = (1 - m)Cr,plastic + mCr,metal.
+In a final step, reflectivity is used to determine the diffuse color:
+
+Cd = (1 - r)C + rCr.
+
+(53)
+
+Note that if an ambient term is used, it should also be based on Cd to avoid inconsistent coloring on lit and unlit faces.
+This way of environment mapping may be more expensive than the usual techniques, but in the context of the model presented here it allows for a much greater variety of effects.
+
+4.3 Discussion of Results
+The figures in this section show some renderings with the new model. The appearance of a wide range of materials can be reproduced with an accuracy that should be sufficient for many real-time rendering applications. At the same time the model is efficient enough to leave room for other perpixel calculations. Furthermore, the model has an intuitive and compact parametrization that leaves room for custom application-dependent parameters. It is also scalable and can be tailored to closely meet the needs of a specific application or hardware.
+Especially with the specular term there are some unsatisfactory points, however. First of all, the model spends a lot of calculations on deriving the specular color from the material color and the metalness parameter. A texture with an explicit specular color and a specularity in the alpha channel may be more flexible and efficient, although this would leave no room for custom parameters in the texture. Such a texture would also remove the necessity
+42
+
+for an per-object scaling factor for the specular highlight and automatically decouple intensity and shape of the specular highlight.
+5 Conclusion
+In this article several shading models were discussed with regard to their application in real-time raster graphics running on modern GPUs.
+The classical Phong variants may still be sufficient for many applications. Especially the versions with a separate specular color can produce satisfactory results, and well-painted textures can certainly compensate some the models' shortcomings. But as computing power increases, better models become available.
+The model by Ashikhmin & Shirley enjoys growing popularity in real-time rendering. In the isotropic version with a Lambertian diffuse term the model is (relatively) fast, has a compact and intuitive parametrization and features some of the effects that until then only more expensive, physically-based models were capable of. Also, an anisotropic version and a non-Lambertian diffuse term are available if the application needs such features.
+A model that seems a bit underrated in real-time rendering is Ward's model. Maybe because it uses a Gaussian specular lobe instead of the familiar BlinnPhong cosine lobe. But in quality and computational expense it is comparable to the Ahikhmin-Shirley model.
+The models by Oren & Nayar and Cook & Torrance are a different breed. They are very expensive, and ­ considering that models like AshikhminShirley and Ward achieve similar quality at lower costs ­ seem not very attractive for real-time rendering. However, if parameters are available and expensive calculations are replaced by table look-ups, some applications may be able to make good use of them.
+The Lafortune model suffers from parametrization issues, too. It can reproduce the appearance of many materials accurately, but needs rather large amounts of measured data to do so.
+The models by Schlick and Strauss have a nice parametrization (although I found Schlick's model a bit hard to tweak). But they contain many scalar operations, especially floating point divisions, that reduce their effectiveness on GPUs.
+The model presented in Section 4 tries to combine the strong points of the models discussed above into a new shading model. Main influences were the models by Ashikhmin & Shirley and Strauss. The model is efficient, able to capture the appearance of many materials quite accurately, and has a very
+43
+
+compact parametrization. However, it is not energy-conserving and the lack of a separate specular color may be a drawback, too, depending on the field of application.
+References
+[1] Tomas Akenine-Mo¨ller, Eric Haines, and Natty Hoffman. Real-Time Rendering 3rd Edition. A. K. Peters, Ltd., Natick, MA, USA, 2008.
+[2] M. Ashikhmin and P. Shirley. An anisotropic phong brdf model, 2000.
+[3] M. Ashikmin and P. Shirley. An anisotropic phong light reflection model, 2000.
+[4] James F. Blinn. Models of light reflection for computer synthesized pictures. In SIGGRAPH '77: Proceedings of the 4th annual conference on Computer graphics and interactive techniques, pages 192­198, New York, NY, USA, 1977. ACM.
+[5] R. L. Cook and K. E. Torrance. A reflectance model for computer graphics. ACM Trans. Graph., 1(1):7­24, 1982.
+[6] Kristin J. Dana, Bram van Ginneken, Shree K. Nayar, and Jan J. Koenderink. Reflectance and texture of real-world surfaces. ACM Trans. Graph., 18(1):1­34, 1999.
+[7] Craig Donner and Henrik W. Jensen. A spectral bssrdf for shading human skin. In Rendering Techniques 2006: 17th Eurographics Workshop on Rendering, pages 409­418, June 2006.
+[8] Philip Dutre, Philippe Bekaert, and Kavita Bala. Advanced Global Illumination. AK Peters, Ltd., July 2002.
+[9] Xavier Granier and Wolfgang Heidrich. A simple layered rgb brdf model. Graph. Models, 65(4):171­184, 2003.
+[10] Pat Hanrahan and Wolfgang Krueger. Reflection from layered surfaces due to subsurface scattering. In SIGGRAPH '93: Proceedings of the 20th annual conference on Computer graphics and interactive techniques, pages 165­174, New York, NY, USA, 1993. ACM.
+[11] Xiao D. He, Kenneth E. Torrance, Franc¸ois X. Sillion, and Donald P. Greenberg. A comprehensive physical model for light reflection. SIGGRAPH Comput. Graph., 25(4):175­186, 1991.
+44
+
+[12] Henrik Wann Jensen, Stephen R. Marschner, Marc Levoy, and Pat Hanrahan. A practical model for subsurface light transport. In SIGGRAPH '01: Proceedings of the 28th annual conference on Computer graphics and interactive techniques, pages 511­518, New York, NY, USA, 2001. ACM.
+[13] Eric P. Lafortune and Yves D. Willems. Using the Modified Phong BRDF for Physically Based Rendering. Technical Report CW197, Leuven, Belgium, 1994.
+[14] Eric P. F. Lafortune, Sing-Choong Foo, Kenneth E. Torrance, and Donald P. Greenberg. Non-linear approximation of reflectance functions. In SIGGRAPH '97: Proceedings of the 24th annual conference on Computer graphics and interactive techniques, pages 117­126, New York, NY, USA, 1997. ACM Press/Addison-Wesley Publishing Co.
+[15] Istv´an Laz´anyi and La´szl´o Szirmay-Kalos. Fresnel term approximations for metals. In WSCG (Short Papers), pages 77­80, 2005.
+[16] Robert R. Lewis. Making Shaders More Physically Plausible. In Fourth Eurographics Workshop on Rendering, number Series EG 93 RW, pages 47­62, Paris, France, 1993.
+[17] S. Premoze M. Ashikhmin. Distribution-based brdfs. Technical report, 2006. http://www.cs.utah.edu/ premoze/dbrdf/dBRDF.pdf.
+[18] G. Mueller, J. Meseth, M. Sattler, R. Sarlette, and R. Klein. Eurographics 2004 star state of the art report acquisition, synthesis and rendering of bidirectional texture functions.
+[19] L. Neumann and A. Neumann. New simple reflectance models for metals and other specular materials, 1998.
+[20] Addy Ngan, Fr´edo Durand, and Wojciech Matusik. Experimental analysis of brdf models. In Proceedings of the Eurographics Symposium on Rendering, pages 117­226. Eurographics Association, 2005.
+[21] M. Oren and S.K. Nayar. Generalization of the lambertian model and implications for machine vision. IJCV, 14(3):227­251, April 1995.
+[22] Michael Oren and Shree K. Nayar. Generalization of Lambert's reflectance model. Computer Graphics, 28(Annual Conference Series):239­246, 1994.
+[23] Matt Pharr and Greg Humphreys. Physically Based Rendering : From Theory to Implementation. Morgan Kaufmann, August 2004.
+[24] Bui Tuong Phong. Illumination for computer generated pictures. Commun. ACM, 18(6):311­317, 1975.
+45
+
+[25] Pierre Poulin, Alain Fournier, and Vt W. A model for anisotropic reflection. In Computer Graphics, pages 273­282, 1990.
+[26] Christophe Schlick. A Customizable Reflectance Model for Everyday Rendering. In Fourth Eurographics Workshop on Rendering, number Series EG 93 RW, pages 73­84, Paris, France, 1993.
+[27] Christophe Schlick. An inexpensive BRDF model for physically-based rendering. Computer Graphics Forum, 13(3):233­246, 1994.
+[28] Christophe Schlick. A survey of shading and reflectance models. Computer Graphics Forum, 13(2):121­131, 1994.
+[29] B. G. Smith. Geometrical shadowing of a random rough surface. IEEE Transactions on Antennas and Propagation, pages 668­671, 1967.
+[30] Jos Stam. Diffraction shaders. In SIGGRAPH '99: Proceedings of the 26th annual conference on Computer graphics and interactive techniques, pages 101­110, New York, NY, USA, 1999. ACM Press/Addison-Wesley Publishing Co.
+[31] Paul S. Strauss. A realistic lighting model for computer animators. IEEE Comput. Graph. Appl., 10(6):56­64, 1990.
+[32] K. E. Torrance and E. M. Sparrow. Theory for off-specular reflection from roughened surfaces. J. Opt. Soc. Am., 57(9):1105­1114, 1967.
+[33] Bruce Walter, Stephen R. Marschner, Hongsong Li, and Kenneth E. Torrance. Microfacet models for refraction through rough surfaces. In Proceedings of the Eurographics Symposium on Rendering. Eurographics Association, 2007.
+[34] Gregory J. Ward. Measuring and modeling anisotropic reflection. SIGGRAPH Comput. Graph., 26(2):265­272, 1992.
+46
+
+

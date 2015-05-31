@@ -1,0 +1,491 @@
+CARGO Remix - May 2004
+
+Procedural Level Sets
+
+Michael Mullan University of Illinois
+
+Ross Whitaker University of Utah
+
+John C. Hart University of Illinois
+
+Abstract
+This paper describes a technology for manipulating the shape of an implicitly modeled surface so that it follows a geometric flow. The proposed technology is a generalization of the method of level sets, which specifies how to manipulate the isosurfaces of greyscale functions, sampled on discrete grids. The proposed formulation projects the geometric motion of the level sets of a greyscale function onto its parametric representation. The resulting method provides a set of new capabilities for implicit models, including the computation of geometric flows, such as motion by mean curvature and the fitting of implicitly represented surfaces to volumetric data. This paper presents results for the computation of mean-curvature flow on the level sets of polynomials and the fitting of radial basis functions, arranged as dipoles, in an adaptive-refinement scheme to achieve surface fitting with variational implicits.
+Keywords: Implicit surfaces, level sets, morphing, surface fitting
+1 Introduction
+The level set method has revolutionized the solution of evolving surface problems in computational science. It propagates a surface represented as an isosurface of a volume of scalar values. This implicit isosurface representation provides a natural response for the self-intersection and topology changes that can occur during propagation. The level set method propagates the isosurface by integrating a time derivative of the voxel values. The time derivative is controlled by a user-defined speed function that indicates how fast the surface should move in its normal direction.
+With the construction of different speed functions, level sets have solved a wide variety of problems in shape modeling and computer graphics. A constant speed function can yield offset surfaces [Kimmel and Bruckstein 1993] or, when negative, the medial axis transform [Kimmel et al. 1995]. Level sets have been used in several interactive shape modeling systems [Baerentzen and Christensen 2002; Museth et al. 2002; Lawrence and Funkhouser 2003]. They have also been used for geometry processing applications such as feature-perserving surface smoothing [Tasdizen et al. 2002]. Setting the speed function to be the distance to a different object yields a morphing algorithm [Breen and Whitaker 2001]. Level sets can also interpolate scattered point data by morphing a sphere to fit these points [Nguyen et al. 2002; Du and Qin 2003].
+The level set method operates on a fixed-resolution uniform rectilinear lattice of voxels. This provides a simple free-form shape representation, and the integration of partial differential equations on a uniform space-grid is well studied. Indeed, special integration methods have been developed [Sethian 1999] to propagate nonsmooth surface features such as corners.
+Physically-based animation applications based on computational fluid dynamics (CFD) simulation often operate on voxel grids, and the level set method has improved the efficiency and accuracy of such simulations of water [Foster and Fedkiw 2001; Enright et al. 2002b] and fire [Nguyen et al. 2002]. For some graphics applications, however, the processing of a full voxel array, or even a tubular subset [Adalsteinsson and Sethian 1995], is not an effective use of computational resources.
+
+Along with its benefits, the voxel representation also limits the utility of the level set method. Shapes in more popular representations (e.g. poly meshes, NURBS, subdivision surfaces, even implicits and solid models) must be discretized into a voxel array for level set processing, often through a distance transform. The storage of voxel data is also quite time and memory consumptive for a shape that could be stored and processed more compactly in its original representation.
+In addition to inefficient computation and storage, the fixed resolution of the voxel grid limits the precision of level set geometry processing. Octree and especially adaptive distance field [Frisken et al. 2000] representations can improve precision, but robust methods for hierarchical level set propagation have not yet been developed.
+These problems could be avoided by the propagation of a surface mesh instead of a space mesh. Section 2 describes previous attempts to propagate surface meshes. While the propagation of mesh vertices is straightforward, the management of mesh connectivity in the presence of self-intersection and topology changes becomes quite complicated.
+The proposed computational strategy retains topological benefits of the implicit representation of evolving surfaces while avoiding the drawbacks of a fixed resolution voxel array. To this end, Sec. 3.1 shows how to propagate an implicit surface (e.g. algebraic surfaces, blobs [Blinn 1982]) under an arbitrary speed function. This propagation of course occurs within the limits of the implicit's parameterization, and our method creates a least-squares optimal fit of the implicit to the shape specified by the geometric flow.
+Radial basis functions have provided a free-form implicit representation of shape. In their most common form, radial basis functions are used to construct an implicit surface function interpolating a collection of sample points, called centers. Section 4 shows that propagation of these RBF centers is problematic. Instead, we use a dipole RBF representation where the RBF centers are slightly above and slightly below the implicit surface. We derive the propagation formula for these RBF dipoles, and investigate methods for their adaptive refinement.
+2 Previous Work
+The limitations of the voxel representation are well known and some techniques for overcoming time and space complexity, and its fixed-resoltion have been investigated.
+Sethian's book [1999] describes two techniques for reducing the O(n3) time and space complexity of processing voxel grids. The narrow band method restricts computation to voxels near the isosurface, reducing computational complexity to O(n2). When the speed function does not change sign, the entire propagation can occur in place in amortized O(n2) time using the fast marching method, which solves for each voxel the time when the surface propagation would pass through it.
+A recent GPU implementation [Lefohn et al. 2003] accelerates computation and limits storage of the narrow band method via a clever paging mechanism but adds a significant amount of complexity to the implementation.
+Sethian [1999] makes strong arguments against the propagation of surface meshes, presumably through motion of the vertices.
+
+1
+
+CARGO Remix - May 2004
+
+When vertices become close, numerical error can cause instability. The local intersection that occurs when propagating corners inward can cause swallowtails. These inside-out curve segments in 2-D can be removed by delooping methods [Maekawa 1999; Pham 1992], but such methods are cumbersome, error-prone and do not appear to extend to surfaces in 3-D.
+Semi-Lagrangian methods [Strain 2000; Strain 2001] accelerate the propagation of curves in 2-D with higher precision by tracing the path of each point on the evolving curve. These paths, called characteristics, are the integral curves of the (global) speed function. The level set value of each space-grid point at time t are thus found as the (interpolated) level set value at its position at time t - t. Thus the evolving interface moves its surface points along a Lagrangian path, but the path is evaluated at its endpoints on an Eulerian voxel grid.
+The entropy satisfying Lagrangian method [Jiao 2001] is able to propagate a closed polyline in 2-D. It uses simplification and subdivision to maintain a uniform distribution of curve vertices, and repositioned these vertices at corners to preserve shocks. The method uses a geometric theorem to predict local self-intersection, and locally resamples the curve to avoid the swallowtail before it occurs. The method uses collision detection to detect topology changes, and resolves these with a simple reconnection of the curve vertices. The extension of this method to 3-D appears promising but has not occurred yet.
+Lawrence and Funkhouser [2003] painted a speed function onto polygonal mesh models to interactively grow trees and other 3-D shapes. They propagated a dynamic polygonal mesh [Markosian et al. 1999] but limited their demonstration to simple cases that avoided shocks and topology changes.
+The precision of the voxel representation is often limited to a fixed resolution. Recent hierarchical integration methods have been developed that provide a multiresolution space-mesh for evolving a curve in a 2-D quadtree [Strain 1999b; Strain 1999a] or a surface in a 3-D octree [Popinet 2003; Losasso et al. 2004]. In physical simulation and animation, the lack of precision of a space grid can lead to the inaccurate computation of physical quantities such as volume. When simulating water, the appearance of massive evaporation was avoided by propagating air and water particles near the level set, and adjusting the level set to divide the air and water particles after each propagation step [Enright et al. 2002b; Enright et al. 2002a].
+We demonstrate our results, in part, by using the level set formulation to fit algebraic surfaces to meshed surfaces. Algebraic curve and surface fitting is a well studied area in geometric modeling, and for example Pratt [Pratt 1987] used least squares to directly (noniteratively) solve for the algebraic surface coefficients. Our implementation of procedural level sets too is based on least squares, though in our case to minimize the change in surface parameters during surface fitting iterations. Our methods can fit any implicit surface to data, including the blobby model. Procedural level sets provide an iterative alternative to the hierarchical approach of Muraki [1991]. Our adaptive RBF techniques are similar to Muraki's blob subdivision, though our implementation is with a speed function based in a general level set context whereas his solution used a specialized objective function and a quasi-Newton solver.
+
+3 Implicit Surface Propagation
+
+3.1 Derivation
+Following the development in Sethian [1999], the level set method represents a moving interface surface implicitly as the isosurfaces of a time-varying scalar field
+
+S(t) = {x : (x, t) = 0}
+
+(1)
+
+and propagates the surface S in its normal direction by changing its underlying field  via
+
+(x, t) = -f (x, t)||(x, t)||
+
+(2)
+
+where f is a speed function of space, time, curvature, etc., and
+
+,  are the derivatives with respect to space and time, respec-
+
+tively, of the scalar function .
+
+Let xi(t) be the path of some particle i on the evolving surface
+
+S(t), such that
+
+i(t)  (xi(t), t) = 0
+
+(3)
+
+for all t in the surface evolution time interval. The time derivative
+
+of (3)
+
+i(t)  i(t) · x i(t) + (xi(t), t) = 0
+
+(4)
+
+reveals not only that the value of the particle as it moves along its path does not change (i(t) = 0), but also that the time derivative of the function  at a fixed position (in this case at the point xi(t))
+is equal to the negative of the dot product of its (spatial) gradient i(t) = (x, t)/x and the particle's velocity1
+The particle is otherwise free to roam the surface as it evolves.
+We can minimize the motion of the particle by allowing it to move
+only in the direction of maximum change to ,
+
+x i(t)
+
+=
+
+fi(t)
+
+i(t) ||i(t)||
+
+(5)
+
+where fi(t) = f (xi, t) is a user defined speed function. Combin-
+
+ing (4) with (5) yields the level set propagation equation (2) that,
+
+when integrated, defines a moving implicit surface that evolves un-
+
+der the control of the speed function f. To provide sufficent flexi-
+
+bility in the allowable shapes of the isosurfaces, level set methods
+
+have been developed on an Eulerian space grid. The continuous
+
+function (x, t) is reconstructed from a time series of a volumetric
+
+array of samples.
+
+We are instead interested in the evolution of implicit surfaces
+
+represented by methods other than uniform rectilinear lattice sam-
+
+ples. To this end, we generalize the function  to include alternative
+
+implicit surface representations. Following Witkin and Heckbert
+
+[1994], let
+
+(x, q) = 0
+
+(6)
+
+represent an implicit surface as the solutions x for fixed vector of
+
+shape parameters q. If  described a family of spheres, then q
+
+would contain the center and radius of a sphere. The uniform rec-
+
+tilinear scalar grid representation of an implicit surface used by the
+
+classical level set method also fits in this scheme, where the param-
+
+eter vector q contains the ordered values of the samples. Thus a 2563-voxel isosurface representation yields a parameter vector q of
+
+64M elements.
+
+Let q(t) represent the shape evolution S(t) as a path through
+
+the parameter space of . Moving particles on this moving surface
+
+satisfy
+
+i(t) = (xi(t), q(t)) = 0.
+
+(7)
+
+Assuming the surface passes through the particles at t = 0, particle motion is coupled with surface motion by maintaining the dynamic constraint
+
+i(t) = i(t) · x i(t) + qi(t) · q (t) = 0
+
+(8)
+
+where q(x, q) = (x, q)/q is the parameter gradient of  whose elements indicate the effect of the corresponding parameter on the value of . Given a shape evolution q(t), one can thus solve
+
+1Note that i =  as the former is the change in value along the particles path whereas the latter is the change in value at a fixed position.
+
+2
+
+CARGO Remix - May 2004
+
+for the paths xi that keep particles on the surface. But more power-
+
+fully given a reasonable number of particle paths xi(t) one can find
+
+a shape evolution in the form of a parameter path q(t) such that at
+
+each time t the surface passes through the particle positions.
+
+Combining the level set  (4) with the Witkin-Heckbert  (8)
+
+reveals that
+
+i(t) = qi(t) · q (t)
+
+(9)
+
+which when incorporated into the speed equation (2) yields
+
+qi(t) · q (t) = -f (xi, t)||i(t)||.
+
+(10)
+
+This equation couples the change in parameters q with the speed function. However, because both sides of the equation are real, any number of solutions q can satisfy it. We solve this underdetermined system with a least-squares optimization via Lagrangian multipliers to minimize the parameter change. We obtain this least squares solution in the direction of the gradient
+
+q (t) = j qj (t)
+j
+and solve for the Lagrange multipliers j
+
+(11)
+
+(qi(t) · qj (t)) j = -fi(t)||i(t)||.
+j
+
+(12)
+
+3.2 Analysis
+Singular Values. Equation (12) is a system of n equations of n unknowns, where n is the number of floater particles on the surface. However, its result is used in (11) to scale the sum of m-vectors to find the incremental change in the m implicit surface parameters. For common implicit surface parameterizations ranging from algebraics to blobs, the number of parameters is less, often much less, than the number of particles needed to interrogate the surface. Thus the n × n matrix in (12), which we can label qij(t) is rank deficient, since an m × m matrix would suffice. This observation has been verified by a singular value decomposition of the n×n matrix, which reveals only m singular values whose absolute value exceeds a small epsilon.
+We are tempted to limit our solution to a subset of m floater particles, to yield a full rank matrix qij(t). However, the role of the floater particles is to detect variation in the surface and the speed function. While reducing the number of floater particles increases the solution efficiency, it reduces the validity of the solution as important features in the surface or small spikes in the speed function can be missed. The redundancy of the additional floater particles provides the user with an additional implementation variable controlling the resolution of feature sensitivity.
+An alternative is to choose a different randomized collection of m particles to solve for the m parameters. One runs the risk of an unlucky choice producing a single system, but such cases could simply trigger the re-choosing of a different random collection of m particles.
+One might consider avoiding the derivations altogether, implement the standard Witkin-Heckbert floater and controller particle systems, and propagate the controller particles, moving them in their normal direction proportional to their speed function. The implicit surface, constrained to interpolate the controller particles, would follow. However, as mentioned before, this would either require a large number of controller particles, or placement of controller particles at key positions on the surface. The floater particles are better suited for this task, and the SVD provides a better mapping of their global evaluation of the speed function to the appropriate implicit surface parameters.
+
+Regularization. On an implicit surface  = 0, but there are uncountably many functions a = 0 for real non-zero a that are also zero on the implicit surface. We have observed that implicit surface propagation has a tendency to inflate the implicit surface parameters. Furthermore, as the surface nears its goal, these parameters tend to oscillate and thrash as they strive to remove small imperfections.
+The least-squares optimizations of (11) and (12) should prevent parameter inflation, finding the smallest change in implicit surface parameters necessary to propagate the surface. However, as the evolving surface reaches its target, the speed function f approaches zero.
+Global v. Local Representation. Implicit surfaces that depend on global formulations, such as algebraics, exponential blobs and thin-plate radial basis functions, create a dense matrix in (12), because the function value at each surface point i dependence on all parameters q. Local formulations, such as soft object [Wyvill et al. 1986], metaballs [Nishimura et al. 1985] and compactly-supported radial basis functions [Morse et al. 2001], whose individual primitives do not contribute outside a given radius, result in a sparse matrix in (12), and generally faster solutions.
+3.3 Results
+We tested our implicit surface propagation derivations on algebraic surfaces.
+
+(a) (b)
+Figure 1: A quartic surface propagates to approximate the basin of a the Utah teapot. Disk particles colored according to position relative to the teapot (yellow outside, blue inside and green near).
+
+Fig. 1 performs surface fitting and, as a consequence of level set iteration, morphing. We created a manifold mesh version of the Utah teapot, and formed an implicit representation of it using a function that returned the (signed) distance to the nearest point on the meshed surface. We fit an algebraic surface to a target implicit surface by using the target's distance function as the speed function f (x) = d(x) to propagate the algebraic surface [Breen and Whitaker 2001]. Particles on the sphere in Fig. 1(a) begin inside and outside the teapot, and eventually evolve to form the shape of the teapot's basin in (b).
+Level sets can also be used for scattered data fitting [Zhao et al. 2001], by setting the speed function
+
+f (x) = (x) · d(x).
+
+(13)
+
+such that the surface is only attracted to data points in front of or behind it. (Otherwise the scattered points would cause the propagating surface to burst apart into small bubbles that would collapse around each data point.) We performed the same experiment as Fig. 1 using the teapot vertices as scattered point data. The algebraic surface evolved into a similar configuration, filling the basin, but once there became unstable. This is most likely due to the particles crossing near the data points.
+
+3
+
+CARGO Remix - May 2004
+
+4 Radial Basis Function Propagation
+
+Radial basis functions have become a popular method for implicit
+surface modeling [Turk and O'Brien 2002], scattered point inter-
+polation [Carr et al. 2001] and even morphing [Turk and O'Brien 1999]. A radial basis function (RBF) C : R  R defines a radially symmetric function C(||x - xi||) about a "center" point xi. Given a collection of center points xi and desired function values i, RBFs can be used to define the function
+
+n
+(x) = P (x) + aiC(||xi - x||)
+i=1
+
+(14)
+
+where P (x) = n · x + d is a plane equation of unknown parameters and ai are unknown scales of the radial basis functions. These n+4 unknowns can be found by solving the linear system
+
+ Cij
+
+xTi
+
+1   ai 
+
+ i 
+
+ xj 0 0   n  =  0 
+
+1 00
+
+d
+
+0
+
+(15)
+
+where Cij = C(||xi = xj||). In 2-D the RBF C(r) = r2 log r2 results in a thin plate spline that minimizes the bending energy of the interpolant, and its 3-D analog C(r) = r3 minimizes the bending energy of the field but not necessarily that of the isosurface -1(0).
+Radial-basis-function representations must to have at least one center off the isosurface to avoid trivial (constant) solutions to (15). One strategy is to place single RBF center set to an "inside" value in the middle of an object, but it is sometimes difficult to determine the middle of a contorted object. Another strategy is to surround the object with RBF centers set to an "outside" value, but these values can sometimes interfere with the shape of the RBF surface.
+We want to avoid a global specification of inside and outside. As the surface evolves, its topology and extent may change, and any global inside or outside constraints may become invalid or interfere with the propagation. To avoid this problem, we use RBF dipoles [Turk and O'Brien 2002]. Instead of placing 0-valued RBF centers on the surface at xi, we place a pair of centers at xi ± n with values ± , where ni = i/|i| is the RBF surface normal at xi.. In addition to overcoming the previous problems, RBF dipoles have the additional benefit of exerting control over the local orientation of the RBF surface.
+
+4.1 Derivation
+We perform a "level set" propagation of the RBF surface (14) by moving each RBF dipole by its speed function along its surface normal direction, and solving (15) to get the new surface. However, this strategy introduces some important technical issues.
+While each dipole influences the normal of its neighborhood of the RBF surface, it does not fully constrain the normal. Thus we need to derive a formulation for the propagation of the surface normal, so that we can align the dipole to it at each step of the level set propagation.
+To describe the motion of the dipole orientation, we begin by defining the projection operator,
+
+ nxnx nnT =  nynx
+nz nx
+
+nxny ny ny nz ny
+
+nxnz  nynz  nz nz
+
+(16)
+
+which, when applied to a vector, returns the component of that vector that lies in the direction of the surface normal. The project of a vector onto the tangent plane of a surface is given by
+
+T = I - nnT ,
+
+(17)
+
+where I is the 3 × 3 identity matrix.
+
+The evolution of the normals of an isosurface is defined by
+
+ t
+
+ ||||
+
+.
+
+When
+
+differentiating
+
+a
+
+unit
+
+length
+
+vector
+
+field,
+
+the
+
+deriva-
+
+tive is always perpendicular to the original vector. This means
+
+ t
+
+ ||||
+
+=
+
+T
+
+  t
+
+=
+
+T 
+
+(18)
+
+where  is given by (2) to be -(f ||||). We now have
+
+ t
+
+ ||||
+
+=
+
+-(f ||||)
+
+=
+
+-T D2nf
+
+-
+
+||||T f
+
+(19)
+
+where D is used to denote the generalized gradient that forms a
+
+tensor of the appropriate rank. Thus D   is the gradient of  and D2 is the Hessian of .
+
+The method of computing the gradient of the speed function f
+
+depends on the application. In the case of morphing [Breen and
+
+Whitaker 2001], where f is given as the distance transform to some
+
+target object, f is merely the gradient of the distance transform.
+
+If f depends on the geometry of the level sets of  then one must
+
+take special care to work out the formulation fully. For example, if
+
+we are propagating by mean curvature, the speed function has the
+
+special form
+
+f
+
+=
+
+-
+
+ ||||
+
+(20)
+
+and
+
+ = -||||f =  ·  - nT Df 2n
+
+(21)
+
+Combining this with (19) gives
+
+T ( · ) - T (nT D2n) = T ( · ) - 2T D2D2n - T nT D3n
+
+(22)
+
+4.2 Adaptivity
+As a RBF surface propagates, parts of the surface become illdefined. That is, as the centers move, parts of the surface will be left with few or no centers. We solve this problem by maintaining a set of on surface points, such as the floater particles used by Witkin and Heckbert [1994]. For a given point, we find the closest RBF center. If this distance is above a given threshold, we add a new RBF center at that point. This way, as the surface propagates, we will continually patch ill-defined areas. Adaptivity also prevents the surface from becoming non-compact, as illustrated in Fig. 2.
+
+(a) (b)
+Figure 2: A sphere morphing to a teapot can become unbounded (a), which is corrected with the adaptive insertion of dipoles, shown as gray cones (b).
+If we are propagating our surface towards some target surface, there is more we can do. Once all the RBF centers have reached their targets, we can check each of the on surface points. If any of them are too far from the target surface, we add a new RBF
+
+4
+
+CARGO Remix - May 2004
+center at that point and continue propagation. This helps add detail in areas that a morphing RBF surface might smooth over. This adaptive optimization leads to decent approximations of surfaces with surprisingly few dipoles, as shown in Fig. 3, and compares well against other heuristic approaches to redundant RBF center removal [Carr et al. 2001].
+
+Figure 3: The low-res RBF approximation of the teapot after levelset propagation from a bunny. The bunny has only 130 dipoles, allowing us to do the morph in real time without using the fast multipole method.
+4.3 Results We have implemented RBF level set propagation as discussed above and used it for offsetting and morphing.
+(a) (b)
+Figure 4: (a) A simple tree model interpolated with RBF dipoles (b) and its offset.
+Fig. 4 shows an offset of a tree, computed using a constant positive speed function. A constant negative speed function would lead to a skeleton, though the evolving surface would need to sense when it approached collision and halt before locally annihilating itself, until eventually all propagation ceases leaving an epsilon approximation of the skeleton. An entire paper was written solely for voxel-based level set skeletonization, and likewise a full development of procedural level set skeletonization exceeds our scope here and is left for further investigation.
+Fig. 2 shows why adaptivity is important. When morphing from a small sphere to a teapot, many of the centers will cluster around the top and bottom of the teapot. We need to adaptively add centers to keep the surface from exploding. Yellow cones show the position and orientation of each RBF dipole. Gray cones are dipoles that were added adaptively, and the gray circles are the set of floater particles.
+As can be seen in Fig. 5, this can be a useful way to interpolate a mesh. Usually, when interpolating a mesh with RBF centers, a center is placed at each vertex. This works fine for some models, but this is insufficient for others.
+
+(a) (b)
+Figure 5: Simply placing dipoles at the vertices of a polygonal model can be problematic. A cone reconstructed with a dipole at each vertex (a) versus one fit by level set propagation (b).
+Fig. 6 shows a morph from the bunny to the teapot, and Fig. 7 shows a morph from the bunny to the dragon. Note that without an adaptivity step, we get image (d) in each figure. Adaptivity is required to add the details in image (e). For models with a small number of dipoles, this propagation occurs in real time. For larger models, one should take advantage of the fast multipole method [Carr et al. 2001].
+5 Conclusions
+We have derived the equations of motion for a general implicit surface evolving under a speed function sampled on its surface. This enables level set algorithms to avoid a costly voxel representation and use more compact and efficient procedural implicit surfaces instead. A general derivation relating the speed function to the implicit surface function parameters is stable, but requires a singular value decomposition which can be especially expensive for global implicit surfaces. We also propagate RBF surfaces by moving dipoles in their normal direction under the speed function, which we too found stable and more efficient than the general implicit case.
+We demonstrated these derivations with simple tasks drawn from the numerous applications of level sets. These simple tasks were intended as proof of concept to verify the derivations. Any serious application of level set methods, whether using voxels or the procedural implicit surface propagation described here, requires careful numerical analysis and should be demonstrated on a wide variety of situations. We plan to investigate applications of procedural level sets individually, giving each the depth of analysis required by its domain.
+We implemented our results using the publicly available Surface library [Hart et al. 2002], which implements a generalized, programmable version of surface-constrained particle systems [Witkin and Heckbert 1994; Fleischer et al. 1995] and provided an effective development environment for this work.
+5.1 Acknowledgments
+Supported in part by the NSF and DARPA under the CARGO grants #0310446 and #0310705, and the medium ITR grant #0121288.
+References
+ADALSTEINSSON, D., AND SETHIAN, J. 1995. A fast level set method for propagating interfaces. J. Comput. Phys. 118, 269­277.
+BAERENTZEN, J., AND CHRISTENSEN, N. 2002. Volume sculpting using the level-set method. In Proc. Shape Modeling Intl. 2002, 175­182.
+
+5
+
+CARGO Remix - May 2004
+
+(a) (b)
+
+(c)
+
+(d)
+
+Figure 6: Morph from bunny to teapot using RBF propagation.
+
+(e)
+
+(a) (b)
+
+(c)
+
+(d)
+
+(e)
+
+Figure 7: Morph from bunny to dragon using RBF propagation.
+
+BLINN, J. F. 1982. A generalization of algebraic surface drawing. ACM TOG 1(3), 235­256.
+BREEN, D. E., AND WHITAKER, R. T. 2001. A level-set approach for the metamorphosis of solid models. IEEE TVCG 7(2), Apr., 173­192.
+CARR, J. C., BEATSON, R. K., CHERRIE, J. B., MITCHELL, T. J., FRIGHT, W. R., MCCALLUM, B. C., AND EVANS, T. R. 2001. Reconstruction and representation of 3D objects with radial basis functions. In Proc. SIGGRAPH 2001, 67­76.
+DU, H., AND QIN, H. 2003. Interactive shape design using volumetric implicit PDEs. In Proc. Solid Modeling 2003, 235­246.
+ENRIGHT, D., FEDKIW, R., FERZIGER, J., AND MITCHELL, I. 2002. A hybrid particle level set method for improved interface capturing. J. Comp. Phys. 183, 83­116.
+ENRIGHT, D., MARSCHNER, S., AND FEDKIW, R. 2002. Animation and rendering of complex water surfaces. ACM TOG 21(3), 721­728. (Proc. SIGGRAPH 2002).
+FLEISCHER, K. W., LAIDLAW, D. H., CURRIN, B. L., AND BARR, A. H. 1995. Cellular texture generation. In Proc. SIGGRAPH 95, 239­248.
+FOSTER, N., AND FEDKIW, R. 2001. Practical animation of liquids. Proc. SIGGRAPH 2001, Aug., 15­22.
+FRISKEN, S. F., PERRY, R. N., ROCKWOOD, A. P., AND JONES, T. R. 2000. Adaptively sampled distance fields: A general representation of shape for computer graphics. In Proc. SIGGRAPH, 249­254.
+HART, J., BACHTA, E., JAROSZ, W., AND FLEURY, T. 2002. Using particles to sample and control more complex implicit surfaces. In Proc. Shape Modeling International, 129­136.
+JIAO, X. 2001. Data Transfer and Surface Propagation in Multicomponent Simulations. PhD thesis, University of Illinois at Urbana-Champaign. Tech Report UIUCDCS-R-2001-2251.
+KIMMEL, R., AND BRUCKSTEIN, A. 1993. Shape offsets via level sets. CAD 25(3), 154­161.
+KIMMEL, R., SHAKED, D., KIRYATI, N., AND BRUCKSTEIN, A. 1995. Skeletonization via distance maps and level sets. Comp. Vision and Image Understanding 62(4), 382­391.
+LAWRENCE, J., AND FUNKHOUSER, T. 2003. A painting interface for interactive surface deformation. In Proc. Pac. Graphics 2003, 141­150.
+
+LEFOHN, A. E., KNISS, J. M., HANSEN, C. D., AND WHITAKER, R. T. 2003. Interactive deformation and visualization of level set surfaces using graphics hardware. In Proc. Vis. 2003, 75­82.
+LOSASSO, F., GIBOU, F., AND FEDKIW, R. 2004. Simulating water and smoke with an octree data structure. ACM Trans. on Graphics (Proc. SIGGRAPH 2004) 23(3), July.
+MAEKAWA, T. 1999. An overview of offset curves and surfaces. ComputerAided Design 31, 165­173.
+MARKOSIAN, L., COHEN, J. M., CRULLI, T., AND HUGHES, J. 1999. Skin: A constructive approach to modeling free-form shapes. In Proc. SIGGRAPH 99.
+MORSE, B., YOO, T., RHEINGANS, P., CHEN, D., AND SUBRAMANIAN, K. 2001. Interpolating implicit surfaces from scattered surface data using compactly supported radial basis functions. In Proc. Shape Modeling International, 89­98.
+MURAKI, S. 1991. Volumetric shape description of range data using blobby model. In Proc. SIGGRAPH 91, 227­235.
+MUSETH, K., BREEN, D., WHITAKER, R., AND BARR, A. 2002. Level set surface editing operators. ACM TOG 21(3), July, 330­338. (Proc. SIGGRAPH 2002).
+NGUYEN, D. Q., FEDKIW, R. P., AND JENSEN, H. W. 2002. Physically based modeling and animation of fire. ACM TOG 21(3), 721­728. (Proc. SIGGRAPH 2002).
+NISHIMURA, H., HIRAI, M., KAWAI, T., KAWATA, T., SHIRAKAWA, I., AND OMURA, K. 1985. Object modeling by distribution function and a method of image generation. In Proc. of Electronics Communication Conference '85, 718­725. (Japanese).
+PHAM, B. 1992. Offset curves and surfaces: A brief survey. CAD 24(4), 223­229.
+POPINET, S. 2003. Gerris: A tree-based adaptive solver for the incompressible Euler equations in complex geometries. J. Comp. Physics 190, 572­600.
+PRATT, V. 1987. Direct least-squares fitting of algebraic surfaces. In Proc. SIGGRAPH 87, 145­152.
+SETHIAN, J. A. 1999. Level Set Methods and Fast Marching Methods. Cambridge University Press, New York.
+
+6
+
+CARGO Remix - May 2004
+STRAIN, J. 1999. Fast tree-based redistancing for level set computations. J. Comput. Phys. 152, 648­666.
+STRAIN, J. 1999. Tree methods for moving interfaces. J. Comput. Phys. 151, 616­648.
+STRAIN, J. 2000. A fast modular semi-Lagrangian method for moving interfaces. J. Comput. Phys. 161, 512­528.
+STRAIN, J. 2001. A fast semi-Lagrangian contouring method for moving interfaces. J. Comput. Phys. 169, 1­22.
+TASDIZEN, T., WHITAKER, R., BURCHARD, P., AND OSHER, S. 2002. Geometric surface smoothing via anisotropic diffusion of normals. Proc. Vis. 2002, Oct.
+TURK, G., AND O'BRIEN, J. F. 1999. Shape transformation using variational implicit functions. In Proc. SIGGRAPH 99, 335­342.
+TURK, G., AND O'BRIEN, J. F. 2002. Modelling with implicit surfaces that interpolate. ACM TOG 21(4), 855­873.
+WITKIN, A. P., AND HECKBERT, P. S. 1994. Using particles to sample and control implicit surfaces. In Proc. SIGGRAPH 94, 269­278.
+WYVILL, G., MCPHEETERS, C., AND WYVILL, B. 1986. Data structure for soft objects. Visual Computer 2(4), 227­234.
+ZHAO, H.-K., OSHER, S., AND FEDKIW, R. 2001. Fast surface reconstruction using the level set method. Proc. Workshop on Variational and Level Set Methods in Computer Vision, July.
+7
+
+
