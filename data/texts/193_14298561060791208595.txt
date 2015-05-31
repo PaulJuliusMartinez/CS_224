@@ -1,0 +1,1627 @@
+From: ICAPS-04 Proceedings. Copyright © 2004, AAAI (www.aaai.org). All rights reserved. 
+
+A Planning Heuristic Based on Causal Graph Analysis
+
+Institut f¤ur Informatik, Albert-Ludwigs-Universit¤at Freiburg
+
+Georges-K¤ohler-Allee, Geb¤aude 052, 79110 Freiburg, Germany
+
+Malte Helmert
+
+helmert@informatik.uni-freiburg.de
+
+Abstract
+
+In recent years, heuristic search methods for classical plan-
+ning have achieved remarkable results. Their most successful
+representative, the FF algorithm, performs well over a wide
+spectrum of planning domains and still sets the state of the art
+for STRIPS planning. However, there are some planning do-
+mains in which algorithms like FF and HSP perform poorly
+because their relaxation method of ignoring the (cid:147)delete lists(cid:148)
+of STRIPS operators loses too much vital information.
+Planning domains which have many dead ends in the search
+space are especially problematic in this regard. In some do-
+mains, dead ends are readily found by the human observer
+yet remain undetected by all propositional planning systems
+we are aware of. We believe that this is partly because the
+STRIPS representation obscures the important causal struc-
+ture of the domain, which is evident to humans.
+In this paper, we propose translating STRIPS problems to a
+planning formalism with multi-valued state variables in or-
+der to expose this underlying causal structure. Moreover, we
+show how this structure can be exploited by an algorithm for
+detecting dead ends in the search space and by a planning
+heuristic based on hierarchical problem decomposition.
+Our experiments show excellent overall performance on the
+benchmarks from the international planning competitions.
+
+Introduction
+
+Many current algorithms for STRIPS-style planning are
+based on heuristic forward search in the space of world
+states. The (cid:2)rst successful domain-independent planning
+system using this approach was Bonet and Geffner’s HSP
+(Bonet, Loerincs, & Geffner 1997; Bonet & Geffner 2001).
+Other researchers adopted the general concept and applied
+various modi(cid:2)cations to it, leading to the development of
+planners like GRT (Refanidis & Vlahavas 1999), MIPS
+(Edelkamp & Helmert 2000), which uses heuristic forward
+search among other planning strategies, and most promi-
+nently Hoffmann’s very successful FF system (Hoffmann &
+Nebel 2001). All these planners can be seen as using some
+approximation of the h+ heuristic (Hoffmann 2002). The
+h+ value of a world state is the length of a shortest plan for
+a relaxed planning task, where all operator effects that make
+state variables false are ignored.
+
+As an illustration, consider the transportation task de-
+picted in Fig. 1. The nodes in the (cid:2)gure correspond to lo-
+
+A
+
+C
+
+B
+
+D
+
+F
+
+E
+
+Figure 1: An unsolvable transportation task.
+
+cations, and solid arcs correspond to roads. Note that loca-
+tion D has four incoming but no outgoing roads, and hence
+can be entered but not left. The objective is to move a cargo
+item located at E to location B, as indicated by the dashed
+arrow. Two trucks initially located at C and F may be used
+to achieve this goal (gray nodes). This task is similar in
+structure to several MYSTERY tasks from the planning com-
+petition benchmark suite, e. g. MYSTERY #22 and #23.1
+
+We see that this task has no solution. Even if the cargo
+item could traverse the roadmap by itself, without help of
+the trucks, there would be no path from its initial location to
+its destination. However, using a standard STRIPS encoding
+of the planning task, the h+ value of the depicted state is 8,
+not 1. This is because the relaxed task allows vehicles to be
+at several locations simultaneously: When they are moved,
+the effect of no longer being at the original location is ig-
+nored. This can be interpreted as an ability of the truck to
+(cid:147)teleport(cid:148) to any previously visited location without cost and
+regardless of the existence of a path to that location.
+
+We thus obtain the following optimal relaxed plan: Move
+the right truck to the cargo item and pick it up, then move to
+D and drop it. Then move the left truck to D, pick up the
+cargo item, (cid:147)teleport(cid:148) back to C (not counted as a plan step)
+and (cid:2)nally move to B and drop the cargo.
+
+Unrealized dead ends like this are not the only source of
+problems for heuristic forward planners. Consider the exam-
+ple in Fig. 2. Again, the objective is to transport the cargo
+
+1In MYSTERY tasks, the roadmap is undirected in principle, but
+lack of fuel at a node can lead to situations like the one above. This
+is the case in the tasks mentioned, where locations (cid:147)cherry(cid:148) and
+(cid:147)hotdog(cid:148) start with empty fuel depots and lie on all paths from the
+initial location to the goal location of some cargo item.
+
+ICAPS 2004    161  
+
+A
+
+A’
+
+B
+
+B’
+
+C
+
+C’
+
+D
+
+D’
+
+A(cid:148)
+
+B(cid:148)
+
+C(cid:148)
+
+D(cid:148)
+
+Figure 2: A simple transportation task.
+
+items as indicated by the dashed arrows, using the trucks
+indicated by the gray vertices. The task is solved by (cid:2)rst
+moving the trucks to the initial cargo locations to pick up
+everything, then moving them back to drop everything.
+
+However, the task is troubling for h+-based planners. The
+h+ heuristic does not favor moving a truck towards a cargo
+item over moving it in the opposite direction, as the heuris-
+tic anticipates the eventual need to move the truck back to
+its origin. More precisely, all states in which no cargo items
+have been picked up form a single plateau with the same
+heuristic evaluation. Indeed, if we scale the number of trucks
+and cargo items and the diameter of the graph to higher val-
+ues, current heuristic forward planners fail quickly.
+
+We should emphasize that we do not want to imply that
+the h+ heuristic is inherently bad; in fact it yields exceed-
+ingly good estimates in many planning domains. The point
+we want to make is that the two examples are not at all triv-
+ial to analyze at the propositional level of at-truck-A
+and in-package-truck, on which h+ depends. In our
+opinion, understanding the tasks is much easier if we realize
+that they are really about multi-valued state variables like
+(cid:147)the position of the truck(cid:148) (with values like A, B, C) or (cid:147)the
+state of the cargo item(cid:148) (with values like at-A or in-truck),
+and that these state variables only interact in speci(cid:2)c, very
+limited ways.
+
+This paper discusses how such higher-level concepts and
+their interactions can be found and used automatically by
+a domain-independent planning system. In the sections to
+come we will formalize these notions, analyze an impor-
+tant special case of the resulting planning problem, and show
+how solutions to a number of simpli(cid:2)ed tasks can serve as a
+heuristic for the general case.
+
+† V = fv1; : : : ; vng is a set of state variables, each with an
+
+associated (cid:2)nite domain Dv.
+A partial variable assignment over V is a function s on
+some subset of V such that s(v) 2 Dv wherever s(v) is
+de(cid:2)ned. If s(v) is de(cid:2)ned for all v 2 V, s is called a state.
+† O is a set of operators, where an operator is a pair
+hpre; effi of partial variable assignments called precon-
+ditions and effects, respectively.
+
+† s0 is a state called the initial state, and s? is a partial
+
+variable assignment called the goal.
+An operator hpre; effi is applicable in a state s iff s(v) =
+pre(v) whenever pre(v) is de(cid:2)ned. Applying the operator
+changes the value of v to eff(v) if eff(v) is de(cid:2)ned. For a
+precise de(cid:2)nition of the semantics of SAS+ planning, we
+refer to the paper by B¤ackstr¤om and Nebel (1995). Our def-
+inition differs slightly from the reference in order to more
+closely resemble STRIPS. Like propositional STRIPS plan-
+ning, SAS+ planning is PSPACE-complete.
+
+Translating STRIPS to SAS+
+
+Planning tasks speci(cid:2)ed in propositional STRIPS can be
+straightforwardly translated into SAS+ planning tasks with
+an identical set of (binary) state variables. However, we can
+do better than that using non-binary variables.
+
+A typical STRIPS encoding of the example in Fig. 1 uses
+18 propositional variables at o;l to describe the location of
+the trucks and cargo on the map, plus two state variable in t1
+and in t2 to model cargo inside either truck.
+
+An alternative SAS+ encoding uses only three state vari-
+ables. Two variables v1 and v2 specify the truck locations;
+they can assume six different values corresponding to the six
+locations. The third variable vc de(cid:2)nes the state of the cargo
+item and may assume eight different values corresponding to
+being at any of the six locations or inside either truck. This
+encoding is more concise in the sense that it only allows for
+62 ¢ 8 = 288 states, whereas the STRIPS encoding allows
+for 220 = 1048576 states including ones where trucks are
+at several locations simultaneously or nowhere at all. Of
+course, the number of reachable states is the same for both
+encodings, and there is a straightforward bijection between
+reachable states that can be used for translating operators,
+shown in Fig. 3.
+
+STRIPS state S
+at o;l 2 S
+in t 2 S
+
+SAS+ state s
+s(vo) = l
+s(vc) = t
+
+The SAS+ Planning Formalism
+
+The SAS+ planning formalism is an alternative to propo-
+sitional STRIPS that has been analyzed in depth by several
+researchers. Unlike STRIPS, it allows state variables to have
+non-binary ((cid:2)nite) domains. For example, the position of a
+truck in our (cid:2)rst example can be encoded as a single state
+variable with six possible values.
+De(cid:2)nition 1 SAS+ planning task
+A SAS+ planning task or SAS+ task for short is a 4-tuple
+ƒ = hV; O; s0; s?i with the following components:
+
+Figure 3: STRIPS encoding vs. SAS+ encoding.
+
+While it seems like human insight is required to come up
+with this translation, several existing algorithms are capable
+of doing the kind of mutual exclusion reasoning among state
+variables that leads to the more concise encoding. Examples
+include TIM (Fox & Long 1998) and the inference methods
+of DISCOPLAN (Gerevini & Schubert 1998). In this paper,
+we have used the preprocessing method applied by the MIPS
+planner, described in detail in the paper by Edelkamp and
+
+162    ICAPS 2004   
+
+Helmert (1999). Fig. 4 shows the translation result for the
+example.
+
+V = fv1; v2; vcg
+
+Dv1 = fA; B; C; D; E; Fg
+Dv2 = fA; B; C; D; E; Fg
+Dvc = fA; B; C; D; E; F; t1; t2g
+O = fhfv1 7! Ag; fv1 7! Bgi;
+
+hfv1 7! B; vc 7! Bg; fvc 7! t1gi;
+hfv2 7! E; vc 7! t2g; fvc 7! Egi; : : : g
+
+s0 = fv1 7! C; v2 7! F; vc 7! Eg
+s? = fvc 7! Bg
+
+Figure 4: SAS+ encoding of the running example (Fig. 1).
+Three operators are shown, one instance each of a move-
+ment, pick-up and drop action.
+
+Subtasks and Causal Graphs
+
+The basic idea of our approach is to decompose a planning
+task into subtasks with limited interaction. Let us (cid:2)rst for-
+malize our notion of subtask.2
+
+De(cid:2)nition 2 SAS+ subtask
+Let ƒ = hV; O; s0; s?i be a SAS+ task and V 0 (cid:181) V be a
+subset of its state variables. The subtask induced by V 0 is
+the 4-tuple ƒ0 = hV 0; OjV 0; s0jV 0; s?jV 0i, where we de(cid:2)ne
+OjV 0 = f hprejV 0; effjV 0i j hpre; effi 2 O ^ effjV 0 6= ; g.
+
+Of course, subtasks of a SAS+ task are also SAS+ tasks.
+It is easy to see that if ƒ has a solution, then so has ƒ0,
+although the converse is often not the case. This implies that
+if ƒ0 does not have a solution, then ƒ is also unsolvable.
+This property leads to a method for detecting dead ends in
+the search space of a planning task.
+
+However, this method is fairly limited: In Fig. 1, all sub-
+tasks except for the original task itself are solvable. For in-
+stance, consider the subtask induced by fv1; vcg. It can be
+solved in two steps by (cid:2)rst moving the cargo item into the
+second truck and then from there to the goal location B.
+Note the fact that the absence of the state variable for the
+second truck from the subtask does not lead to a situation
+where the second truck is not available. Instead, it leads to
+a situation where that truck is everywhere at the same time,
+since all preconditions involving v2 are projected away.
+
+Clearly, simplifying the planning task in such a way that
+important preconditions disappear should be avoided. To
+formalize this notion, we introduce the concept of causal
+graphs. The idea is by no means new; early work discussing
+it (although under a different name) includes the papers on
+hierarchical problem solving by Knoblock (1994) and Bac-
+chus and Yang (1994). More recently causal graphs have
+
+2We write f jA for the restriction of function f to set A, i. e. for
+
+the function f x 7! f (x) j x 2 A and f (x) is de(cid:2)ned g.
+
+been applied to planning in unary STRIPS domains (Domsh-
+lak & Brafman 2002)3.
+De(cid:2)nition 3 causal graph
+Let ƒ = hV; O; s0; s?i be a SAS+ task. Its causal graph
+CG(ƒ) is the digraph (V; A) containing an arc (u; v) iff
+u 6= v and there exists an operator hpre; effi 2 O such that
+eff(v) is de(cid:2)ned and either pre(u) or eff(u) are de(cid:2)ned.
+
+Informally, the causal graph contains an arc from a source
+variable to a target variable if changes in the value of the tar-
+get variable can depend on the value of the source variable.
+Note that we have decided to include an arc in the causal
+graph even if this dependency is only of the form of an ef-
+fect on the source variable.
+
+This is a conscious decision. With our de(cid:2)nition, a state
+s can be transformed into a state s0 if and only if this is
+possible in the task induced by the causal graph ancestors
+of all variables on which s and s0 differ. This important
+property would not hold if arcs between variables affected
+by the same operator were not part of the causal graph.
+
+This separability property very much facilitates solving
+tasks where variables have few ancestors in the causal graph,
+which is one of the reasons why many papers focus on plan-
+ning tasks with acyclic causal graphs (Domshlak & Brafman
+2002; Williams & Nayak 1997). An acyclic causal graph im-
+plies that all operators are unary, because operators with k
+effects introduce k-cliques in the causal graph.
+
+v1
+
+v2
+
+vc
+
+Figure 5: Causal graph of the running example (Fig. 1).
+
+STRIPS tasks with acyclic causal graphs are rare, but the
+same is not necessarily true of SAS+. For example, LOGIS-
+TICS tasks fall into this class, although more general trans-
+portation tasks involving capacity or fuel constraints do not.
+The causal graph of our (cid:2)rst example is acyclic, as seen in
+Fig. 5. In fact, the example belongs to a more restricted class
+which we will now de(cid:2)ne.
+De(cid:2)nition 4 SAS+-1
+A SAS+-1 task is a SAS+ task ƒ with a designated variable
+v such that CG(ƒ) has an arc from all other variables to
+v, and no other arcs. This variable v is called the high-
+level variable, whereas all other state variables are called
+low-level variables. A goal must be de(cid:2)ned for the high-
+level variable, and goals must not be de(cid:2)ned for the low-
+level variables.4
+
+3The reference discusses STRIPS with negative preconditions,
+as deciding plan existence for plain propositional STRIPS is trivial
+if all operators are unary.
+
+4The restriction on goals is only for convenience of presentation
+
+and could easily be lifted.
+
+ICAPS 2004    163  
+
+In SAS+-1 tasks, all low-level variables can be changed
+independently, using operators that have no preconditions on
+other variables. The subtask induced by the set of low-level
+variables can thus be easily solved by basic graph search
+techniques. However, solving SAS+-1 tasks is not easy, as
+we shall see in the following section.
+
+We are interested in SAS+-1 planning tasks because they
+are comparatively simple in structure, yet still expressive
+enough to capture complicated interactions between state
+variables. In the following sections, we will discuss the the-
+oretical properties of SAS+-1 planning and present some
+algorithmic techniques. These techniques form the build-
+ing blocks for a planning heuristic for general SAS+ tasks,
+which is presented afterwards.
+
+For the following discussion, it is useful to introduce
+the notion of domain transition graphs. The domain tran-
+sition graph of a state variable is a representation of the
+ways in which the variable can change its value, and of the
+conditions that must be satis(cid:2)ed for such value changes to
+be allowed. Apart from minor notational differences, our
+de(cid:2)nition is identical to the one provided by Jonsson and
+B¤ackstr¤om (1998).
+De(cid:2)nition 5 domain transition graph
+Consider a SAS+ task with variable set V, and let v 2 V.
+
+The domain transition graph Gv is the labeled digraph
+with vertex set Dv which contains an arc (d; d0) iff there is an
+operator hpre; effi where pre(v) = d or pre(v) is unde(cid:2)ned,
+and eff(v) = d0. The arc is labeled by prej(V n fvg).
+
+For each arc (d; d0) with label L, we say that there is a
+
+transition of v from d to d0 under the condition L.
+
+Multiple transitions between the same values using differ-
+ent conditions are possible. The domain transition graphs for
+our running example are shown in Figs. 6 and 7 (the graphs
+for v1 and v2 are identical). As the example indicates, arcs in
+domain transition graphs of low-level variables of SAS+-1
+tasks always have empty labels.
+
+=
+
+1
+
+v
+
+A
+= B
+
+v 1
+v 1 = C
+
+t1
+
+v
+
+1 = D
+
+v
+
+1
+
+=
+
+E
+
+v
+
+1
+
+=
+
+F
+
+A
+
+B
+
+C
+
+D
+
+E
+
+F
+
+v
+
+2
+
+=
+
+v
+
+2
+
+=
+
+A
+
+B
+
+v
+
+2 = C
+
+v 2 = D
+= E
+=
+
+v 2
+
+F
+
+2
+
+v
+
+t2
+
+Figure 6: Domain transition graph for vc.
+
+If all operators of a task are unary, there is a strong cor-
+respondence between domain transition graphs, states, and
+
+164    ICAPS 2004   
+
+A
+
+C
+
+B
+
+D
+
+F
+
+E
+
+Figure 7: Domain transition graph for v1 and v2.
+
+state transitions. A state is characterized by the values of
+the state variables, which in turn correspond to vertices in
+their respective domain transition graphs. For a given state
+s, we call s(v) the active vertex of Gv. An operator applica-
+tion in a unary SAS+ task changes the value of exactly one
+state variable, by changing the active vertex of some domain
+transition graph to one of its successors. Such a transition is
+allowed iff its conditions are satis(cid:2)ed, de(cid:2)ning constraints
+on the active vertices of other domain transition graphs.
+
+Plan execution can thus be viewed as simultaneous traver-
+sal of domain transition graphs, where a transition on a given
+graph can be allowed or forbidden depending on the active
+vertices of the other graphs. This is the view expressed in
+the paper by Domshlak and Dinitz (2001a). In the case of
+SAS+-1 tasks, only transitions of the high-level variable can
+be constrained.
+
+Theoretical Properties of SAS+-1
+
+n problem.
+
+Intuition suggests that SAS+-1 planning should be easier
+than SAS+ planning in general. This is in fact the case.
+While SAS+ planning is PSPACE-complete, SAS+-1 plan-
+ning is easily seen to be in NP. However, the problem is not
+easy, as the following result shows. The proof is based on
+an earlier result by Domshlak and Dinitz (2001a; 2001b) for
+the closely related STS-F_…
+Theorem 6 PLANEX-SAS+-1 is NP-complete
+The plan existence problem for SAS+-1 is NP-complete.
+Proof: Membership in NP follows from a polynomial plan
+length argument. In a minimal plan, the high-level variable
+does not assume the same value twice, and a low-level vari-
+able does not assume the same value twice unless the high-
+level variable was changed in between. Together, this leads
+to a quadratic length bound allowing a non-deterministic
+guess-and-check algorithm to run in polynomial time.
+
+For hardness, we reduce from the NP-complete PFP (path
+with forbidden pairs) problem (Garey & Johnson 1979,
+problem GT54): Given a digraph (V; A), vertices v0; v? 2
+V , and a set of arc pairs P (cid:181) A £ A, is there a path from v0
+to v? containing at most one arc from each pair in P ?
+
+The high-level variable vH of the corresponding SAS+-1
+task has the domain V , initial value v0 and goal value v?. For
+each forbidden pair (a; b) 2 P , there is a low-level variable
+v(a;b) with domain f?; a; bg and initial value ?.
+
+Low-level transitions allow changing the value of v(a;b)
+from ? to either a or b. For each arc a = (u; v) 2 A, a high-
+level transition changes the value of vH from u to v if all
+low-level variables which have a in their domain currently
+
+assume that value. Thus, low-level transitions correspond
+to selecting the usable arc of each forbidden pair, and high-
+level transitions correspond to traversing the usable arcs.
+
+This mapping is a polynomial reduction: If the planning
+task is solvable, then the high-level transitions of a solution
+plan de(cid:2)ne a legal path for the PFP instance. Conversely, if
+there is a path for the PFP instance, the low-level variables
+can be set accordingly so that the high-level variable can
+follow that path to solve the planning task.
+
+The result even holds if we restrict operators to de(cid:2)ne at
+most one precondition on low-level variables, because PFP
+is NP-complete even if all pairs are required to be disjoint.
+However, some classes of SAS+-1 tasks can be solved
+ef(cid:2)ciently. For example, solutions are found in polynomial
+time by explicit state space search if the number of low-level
+variables is bounded by a constant.5 Unfortunately, typical
+planning tasks, even those with acyclic causal graphs, do not
+have this property. For example, in the LOGISTICS domain,
+the causal graph indegree of the variables representing pack-
+ages equals the number of vehicles, which can be fairly high.
+Still, plan generation for LOGISTICS tasks is easy because
+of an additional property: The domain transition graphs of
+all state variables are strongly connected. Under this restric-
+tion, SAS+-1 plans can be generated in polynomial time,
+since all values of the low-level variables can be achieved
+from any con(cid:2)guration, and thus all high-level transition
+conditions can be satis(cid:2)ed at will. The following result
+shows that the corresponding optimization problem is still
+hard.
+Theorem 7 PLANLEN-SAS+-1 is NP-complete
+The bounded plan existence problem for SAS+-1 (deciding
+whether a plan of a given maximum length M exists) is NP-
+complete, even if all domain transition graphs are strongly
+connected.
+Proof: Membership in NP follows from the previous result.
+For hardness, we reduce from the NP-complete X3C (exact
+cover by 3-sets) problem (Garey & Johnson 1979, problem
+SP2): Given a collection C of three-element subsets of the
+set f1; : : : ; 3qg, does C contain an exact cover, i. e. a subset
+
+C 0 of cardinality q with S C 0 = f1; : : : ; 3qg?
+
+The corresponding SAS+-1 task has a high-level variable
+vH with domain f0; : : : ; 3qg, initial value 0 and goal value
+3q. For each set S 2 C, there is a low-level variable vS
+with domain f?; >g, initially set to ?. The low-level vari-
+ables can change their value between ? and > arbitrarily;
+the high-level variable can change its value from i to i + 1 if
+some low-level variable vC with i + 1 2 C is currently set to
+>. If S contains multiple sets containing i + 1, there is one
+high-level transition for each. Finally, we add an uncondi-
+tional transition from 3q to 0 to ensure strong connectivity.
+The maximum plan length M is set to 4q.
+
+To see that this is a polynomial reduction, observe that
+low-level transitions correspond to selecting elements for C 0
+and high-level transitions correspond to checking that C 0 in-
+
+deed covers all of f1; : : : ; 3qg. The length bound ensures
+that only q elements of C are selected.
+
+It is interesting to compare the previous result to LOGIS-
+TICS planning with a single vehicle (Helmert 2001), where
+domain transition graphs are also strongly connected and
+causal graphs have one low-level variable and many high-
+level variables. For these tasks, plan generation is also a
+polynomial problem, and bounded plan existence is also NP-
+complete.
+
+A Planning Algorithm for SAS+-1
+
+In this section, we describe a polynomial algorithm for solv-
+ing SAS+-1 tasks. Because plan existence for SAS+-1 is an
+NP-hard problem, the algorithm is not complete: While all
+generated plans are valid, there are solvable tasks for which
+no solution is found.
+
+In the following, let hV; O; s0; s?i be the given SAS+-1
+
+task. Let vH be the high-level variable, with domain DH.
+
+The algorithm is based on Dijkstra’s algorithm for the
+single-source shortest path problem. Thus, it tries to (cid:2)nd
+a plan for achieving each value in DH, not just the desired
+value s?(vH). Like Dijkstra’s algorithm, it (cid:2)rst (cid:2)nds the
+shortest plan for reaching any high-level value different to
+s0(vH), then tries to reach the second-nearest value etc., un-
+til no further values are reachable or a plan to the goal is
+found. It is not complete because it does not reinvestigate
+the plans used for achieving a certain high-level value, al-
+though it might turn out that these lead to dead ends caused
+by unfortunate modi(cid:2)cations to the low-level variables.
+
+It helps to view the low-level variables as (cid:147)resources(cid:148)
+which are used to achieve a certain goal on the high-level
+variable. The algorithm tries to reach each high-level value
+as quickly as possible, without trying to preserve resources.
+Because it commits to a certain plan for achieving each high-
+level value, the complete world state is known during plan-
+ning. The algorithm works as follows6:
+1. Initialization:
+plan(dH) = ‰hi
+Queue = DH
+
+if dH = s0(vH)
+otherwise
+
+unde(cid:2)ned
+
+2. Let dH be an element of Queue minimizing kplan(dH)k
+(unde(cid:2)ned plans have cost 1). Remove dH from Queue.
+Let … = plan(dH) and let s be the state that results from
+applying … in the initial state.
+For all high-level transitions op originating from dH with
+target d0
+
+H and condition pre:
+
+(a) Check if it is possible to satisfy all conditions in pre
+starting from state s. If not, stop and consider the next
+transition. If yes, let …L be a minimal cost plan achiev-
+ing the preconditions. This can be computed by Di-
+jkstra searches in the domain transition graphs of the
+low-level variables. De(cid:2)ne … 0 as the concatenation of
+…, …L and hopi.
+
+5The related (and more general) planning problem for STRIPS
+tasks with a polytree causal graph with bounded indegree is also
+known to be tractable (Domshlak & Brafman 2002).
+
+6The notation k…k denotes the cost of a plan. Usually, this is
+the same as its length (number of operators), but we will later need
+to consider cases in which operator costs are not uniform.
+
+ICAPS 2004    165  
+
+H) = …0.
+
+H)k > k…0k, then set plan(d0
+
+(b) If kplan(d0
+3. Repeat the previous step until Queue no longer contains
+any values for which plan is de(cid:2)ned (in which case the
+algorithm fails), or until s?(vH) is removed from Queue,
+in which case plan(s?(vH)) is the solution.
+We note that the algorithm is complete if the domain
+transition graphs of all low-level variables are strongly con-
+nected: In this case it is always possible to satisfy the pre-
+conditions of a high-level transition.
+
+As an example, consider one of the three components of
+the simple transportation task (Fig. 2). The cargo item, rep-
+resented by the high-level state variable vH, must be moved
+from location D to location A with the help of the truck, rep-
+resented by the (only) low-level state variable vL. The do-
+main of vH is the set fA; B; C; D; tg, where vH = t means
+that the cargo item is being carried by the truck. The domain
+of vL is the set fA; B; C; Dg. Legal operators are pick-up,
+drop, and truck movement actions, de(cid:2)ned in the obvious
+way.
+
+Fig. 8 shows the order in which the different values for the
+cargo variable are removed from the queue. It also denotes
+the high-level transitions (pick-ups and drops) that are con-
+sidered for each value removed from the queue and shows
+the subplans generated during the planning process.
+
+Initially, the queue contains the elements fA; B; C; D; tg;
+
+we have plan(D) = hi and no further plans are de(cid:2)ned.
+
+† Remove D from the queue ˆ s = hvH 7! D; vL 7! Ai.
+
+(cid:150) Consider pickupD:
+
+Set plan(t) = hmoveA
+
+;
+
+B; moveB
+
+;
+
+C; moveC
+
+;
+
+D; pickupDi.
+
+† Remove t from the queue ˆ s = hvH 7! t; vL 7! Di.
+
+(cid:150) Consider dropA:
+
+Set plan(A) = hmoveA
+moveD
+
+;
+
+;
+
+B; moveB
+C; moveC
+
+;
+
+;
+
+C; moveC
+B; moveB
+
+;
+
+;
+
+D; pickupD;
+A; dropAi.
+
+(cid:150) Consider dropB:
+
+Set plan(B) = hmoveA
+moveD
+
+;
+
+;
+
+B; moveB
+C; moveC
+
+;
+
+;
+
+C; moveC
+B; dropBi.
+
+;
+
+D; pickupD;
+
+(cid:150) Consider dropC:
+
+Set plan(C) = hmoveA
+moveD
+
+;
+
+;
+
+B; moveB
+C; dropCi.
+
+;
+
+C; moveC
+
+;
+
+D; pickupD;
+
+(cid:150) Consider dropD: No improvement to plan(D).
+
+† Remove C from the queue ˆ s = hvH 7! C; vL 7! Ci.
+
+(cid:150) Consider pickupC: No improvement to plan(t).
+
+† Remove B from the queue ˆ s = hvH 7! B; vL 7! Bi.
+
+(cid:150) Consider pickupB: No improvement to plan(t).
+
+† Remove A from the queue ˆ return plan(A).
+
+Figure 8: Computing a plan for a subtask of the simple trans-
+portation task (Fig. 2).
+
+Dead-End Detection for SAS+-1
+
+In this section, we investigate the complementary problem
+of proving SAS+-1 tasks unsolvable. Again, the algorithm
+is sound but not complete: None of the tasks shown as un-
+
+166    ICAPS 2004   
+
+solvable admit a solution, but some tasks without solution
+pass unnoticed.
+
+Let ƒ = hV; O; s0; s?i be the given SAS+-1 task, with
+high-level variable vH and low-level variables VL. We as-
+sume that the domains of all variables are disjoint, which
+can be achieved by renaming. The domain of vH is written
+as DH, the union of the domains of VL as DL.
+
+The solution algorithm from the previous section is overly
+strict because it identi(cid:2)es a single world state with each
+value of the high-level variable. Complementary to this, we
+now associate high-level variables with many world states,
+some of which might not actually be feasible. More pre-
+cisely, we keep track whether or not each pair (dH; dL) 2
+DH £ DL is reachable and assume that a state s is reach-
+able whenever for each low-level variable vL,
+the pair
+In words, if the high-level
+(s(vH); s(vL)) is reachable.
+value/low-level value pairs can be achieved individually, we
+assume that they can be achieved simultaneously.
+
+Using this restriction, we obtain the following polynomial
+
+algorithm for computing the set R of reachable pairs.
+1. Initialization: R := f (s0(vH); s0(vL)) j vL 2 VL g.
+L:
+2. For each low-level transition from dL to d0
+
+R := R [ f (dH; d0
+
+L) j (dH; dL) 2 R g.
+
+3. For each high-level transition from dH to d0
+
+H with condi-
+tion fv1 7! d1; : : : ; vk 7! dkg such that (dH; di) 2 R for
+all i = 1; : : : ; k:
+R := R [ f (d0
+[ f (d0
+
+H; d1); : : : ; (d0
+H; dL) j (dH; dL) 2 R ^ dL =2 Dpre g,
+
+H; dk) g
+
+where Dpre is the union of the domains of fv1; : : : ; vkg.
+
+4. Fixpoint iteration: Repeat the two previous steps until R
+no longer changes. The task is considered solvable iff
+(s?(vH); dL) 2 R for any dL 2 DL.
+The third step is the only one which needs some explana-
+H is
+tion. First, we check whether a transition from dH to d0
+applicable. This is the case whenever all values in the condi-
+tion may occur together with dH. If the transition is applica-
+ble, then we can apply it to change the value of the high-level
+variable to d0
+H. In the resulting state, the low-level variables
+mentioned in the condition will have the values dictated by
+the condition ((cid:2)rst line of the update of R), while all other
+low-level variables retain their values (second line of the up-
+date of R).
+
+Of course, in practice the algorithm should not be imple-
+mented using the na¤(cid:17)ve update method we described. One
+possible implementation encodes the update rules in Horn
+Logic, using a propositional variable R(dH;dL) for each pos-
+sible element of R. The resulting formula has O(jOj ¢ jDHj)
+clauses of (cid:2)xed length for the update rules in the second step
+and O(jOj ¢ jDLj) clauses of length bounded by the maximal
+number of preconditions per operator for the update rules in
+the third step, for a total bound of O(kƒk2). The relevant
+reasoning problem in Horn Logic can be solved in linear
+time in the formula size, yielding a quadratic algorithm.
+
+Fig. 9 shows that the algorithm can prove the example
+task of Fig. 1 unsolvable. In this case, a stable value for the
+set R is reached after the third iteration. The result set does
+
+not contain the pair (B; dL) for any low-level value dL, so
+the cargo item cannot be transported to location B.
+
+2. Let Vv be the set consisting of v and all predecessors of
+v in the causal graph of ƒ. Let ƒv be the planning task
+induced by Vv except that the initial value of v is set to d
+and the goal value of v is set to d0.
+
+R1 = f(E; C1); (E; F2)g
+R2 = R1 [ f(E; A1); (E; B1); (E; D1); (E; D2); (E; E2)g
+R3 = R2 [ f(t2; E2); (t2; A1); (t2; B1); (t2; C1); (t2; D1)g
+R0
+
+2 = R3 [ f(t2; D2); (t2; F2))g
+3 = R0
+
+R0
+
+2 [ f(D; D2); (D; A1); (D; B1); (D; C1); (D; D1)g
+
+[ f(F; F2); (F; A1); (F; B1); (F; C1); (F; D1)g
+
+3 [ f(F; D2); (F; E2))g
+
+2 [ f(t1; D1); (t1; D2)g
+
+R00
+
+R00
+
+2 = R0
+3 = R00
+2 = R00
+3 = R00
+
+3
+
+R000
+
+R000
+
+3 ˆ (cid:2)xpoint
+
+Figure 9: Proving the running example (Fig. 1) unsolvable.
+To disambiguate the location values for the two trucks, in-
+dices 1 and 2 are used. The indices for R correspond to the
+numbers of the algorithm steps 1., 2., and 3.
+
+Putting the Pieces Together
+
+We did not discuss SAS+-1 planning for the reason that it
+is interesting in its own right (although we think it is), but
+rather because we want to use the algorithms derived in the
+previous sections to (cid:2)nd plans for general SAS+ tasks.
+
+When considering planning tasks with a complex causal
+structure, it is most important to capture the interactions be-
+tween state variables which are connected by an arc in the
+causal graph. Interactions between state variables where one
+is a remote ancestor of the other are less critical because they
+are mediated by other state variables. State variables where
+neither is an ancestor of the other cannot interact at all except
+via a common ancestor. Thus, instead of solving the plan-
+ning task as a whole, we only consider small local portions
+at a time, namely the subtasks induced by one state variable
+and its immediate predecessors in the causal graph. Each of
+these subtasks is a SAS+-1 task.
+
+By splitting the planning task into parts like this, we no
+longer obtain a solution algorithm, because typically the so-
+lutions to the parts cannot be (cid:2)tted together to form a whole.
+However, we can combine the lengths of the solutions of the
+parts to form a distance heuristic for the overall task. To
+this end, we compute an estimate for the cost of changing
+the value of state variable v from a given value d to another
+value d0, written as costv(d; d0), where d; d0 2 Dv.
+
+Naturally, the cost of changing the value of v depends on
+the cost of changing the values of its causal predecessors.
+The following algorithm for calculating costv(d; d0) re(cid:3)ects
+this. The planning task is again given as ƒ = hV; O; s0; s?i.
+1. If v has no causal predecessors, costv(d; d0) is the length
+of the shortest path from d to d0 in the domain transition
+graph Gv, or 1 if no such path exists. Otherwise, con-
+tinue.
+
+3. costv(d; d0) = k…k, where … is the plan for ƒv found by
+the SAS+-1 planning algorithm. Here, all high-level tran-
+sitions have cost 1 and a low-level transition of variable
+vL from dL to d0
+Having computed the individual cost values, the total cost
+for achieving the goal from a state s is de(cid:2)ned as the sum of
+costv(s(v); s?(v)) over all variables v for which the goal s?
+is de(cid:2)ned.
+
+L has cost costvL(dL; d0
+
+L).
+
+As a simple example of how the decomposition into
+SAS+-1 tasks works, consider Fig. 2 for the last time. Goals
+are de(cid:2)ned for all cargo items, so for each cargo item vari-
+able, we need to consider the subtask induced by that vari-
+able and its sole causal predecessor, the variable of the truck
+that is located in the same component of the roadmap.7 In
+Fig. 8, we have shown that the SAS+-1 planner optimally
+solves tasks of this kind. Adding the costs for the individual
+subtasks together, we get an optimal heuristic for the overall
+planning task in this case.
+
+The observant reader will notice that the above algorithm
+can only compute the transition costs in the case where the
+causal graph is acyclic. Otherwise, the costs for variable
+v can depend on the costs of variable v 0, which can in turn
+depend on the costs for variable v. There are several ways of
+solving this problem. One is initializing all costs to 1 and
+then updating the costs iteratively until a (cid:2)xpoint is reached.
+A second, more radical approach is to ignore some pre-
+conditions during the heuristic computation so that cycles in
+the causal graph are broken. In our experiments, we used the
+following strategy: When variables v, v 0 are part of a cycle
+in the causal graph and there is a transition for variable v 0
+with a condition on variable v, then this condition is ignored
+if v is considered higher-level than v 0. We consider v higher-
+level than v0 iff v is a precondition of fewer operators than
+v0. Thus, as many preconditions as possible are respected.
+
+Somewhat surprisingly, in our implementation the more
+radical approach leads to the better planner. Although typi-
+cally more state evaluations are needed, faster computation
+of the heuristic value results in better overall performance.
+Because of space restriction, we do not discuss the gen-
+eralization of the dead end detection algorithm to arbitrary
+SAS+ tasks in detail. It is very similar to the generalization
+of the planning algorithm.
+
+Experimental Results
+
+We implemented the heuristic described in the previous sec-
+tion in a forward planner using best-(cid:2)rst search, which we
+called CG for (cid:147)causal graph(cid:148). We tested CG on all STRIPS
+benchmarks from the 1998, 2000, and 2002 planning com-
+petitions, totaling 550 planning tasks. When the heuristic
+
+7Depending on the way the task has been speci(cid:2)ed, the other
+truck variables could also be causal predecessors. Whether or not
+this is the case does not affect the heuristic estimate, since these
+trucks can never pick up this cargo item and thus cannot interfere.
+
+ICAPS 2004    167  
+
+evaluator classi(cid:2)ed a state as unsolvable, this was veri(cid:2)ed
+using the dead end detection algorithm. The heuristic may
+consider a state unsolvable while the dead end detection
+does not; in this case, the state was not explored further by
+CG, but a failure of the search was not counted as a proof
+that no solution exists. Thus, we have to consider four pos-
+sible outcomes of the planning process:
+† A plan is found. This is counted as a solved task.
+† The search space is explored until all frontier states are
+assigned a heuristic value of 1 and veri(cid:2)ed to be dead
+ends. This is counted as a task proven unsolvable.
+
+† The search space is explored until all frontier states are
+assigned a heuristic value of 1, but some of them are not
+veri(cid:2)ed to be dead ends. This is counted as a failure.
+
+† The planner exhausts the time or memory bound. This is
+
+counted as a failure.
+The third outcome was never observed in the experiments.
+The benchmark suite contains eleven unsolvable tasks (all
+in the MYSTERY domain), for all of which CG could prove
+that the initial state is already a dead end. All other tasks are
+solvable.
+
+We conducted two experiments. Both were run on a 3
+GHz Linux machine where planners were allowed to use up
+to 1 GB RAM and 5 minutes CPU time.
+In the (cid:2)rst ex-
+periment, we compared the quality of the heuristic function
+used by CG to other heuristics which have proved successful
+in other planners. Towards this end, we reimplemented the
+FF heuristic and HSP’s hadd heuristic in our best-(cid:2)rst-search
+planner, resulting in two planners we call CGFF and CGHSP.
+Note that we only changed the heuristic estimator.
+
+s
+k
+s
+a
+T
+ 
+d
+e
+v
+o
+S
+
+l
+
+540
+
+520
+
+500
+
+480
+
+460
+
+440
+
+420
+
+400
+
+PSfrag replacements
+
+CG
+CGFF
+CGHSP
+
+0s
+
+50s
+
+100s
+
+150s
+
+200s
+
+250s
+
+300s
+
+Search Time
+
+Figure 10: Comparison of CG, FF and HSP heuristics.
+
+All three planners used the same best-(cid:2)rst search tech-
+nique, and all applied the dead end detection routine to the
+initial state of each task, identifying the unsolvable MYS-
+TERY instances.8 Because the three planners only differ in
+8This slightly favors the FF and HSP heuristics, which would
+only identify two of these tasks as unsolvable and fail on the other
+nine without this help. The CG heuristic assigns an in(cid:2)nite heuris-
+tic estimate to the initial states of all these tasks.
+
+168    ICAPS 2004   
+
+their search component, we only measured pure search time
+(rather than total running time) in the (cid:2)rst experiment.
+
+The results are depicted in Fig. 10, where the number of
+tasks solved is drawn as a function of time. For example,
+the graph for CGFF passes through the point (100s; 503) be-
+cause 503 (of 550) benchmarks needed at most 100 seconds
+of search time to solve using the FF heuristic.
+
+Within the (cid:2)ve minute deadline, CG failed to solve 25
+tasks, CGFF failed to solve 34 tasks, and CGHSP failed to
+solve 38 tasks. Fig. 11 shows how many tasks from which
+planning domain each planner could not solve (the two right-
+most columns of the (cid:2)gure are explained further below).
+
+Domain
+BLOCKSWORLD (35)
+DEPOT (22)
+DRIVERLOG (20)
+FREECELL (80)
+GRID (5)
+LOGISTICS (63)
+MPRIME (35)
+MYSTERY (30)
+ROVERS (20)
+SATELLITE (20)
+Total
+
+CG CGFF CGHSP FF LPG
+0
+0
+0
+74
+1
+4
+7
+15
+0
+0
+101
+
+0
+4
+11
+3
+3
+5
+11
+5
+2
+0
+0
+0
+6
+3
+0 12
+0
+5
+0
+0
+38 32
+
+0
+10
+2
+9
+1
+0
+6
+1
+3
+2
+34
+
+0
+14
+3
+2
+1
+0
+1
+1
+3
+0
+25
+
+Figure 11: Unsolved tasks by planner and domain. Numbers
+in parentheses denote total number of tasks in a domain.
+
+All heuristics were computed at comparable speeds, so
+the differences in performance were mainly due to differ-
+ences in quality. To measure this, we compared the number
+of state expansions for all tasks solved by all three heuris-
+tics.
+It turned out that for the overwhelming majority of
+tasks, very few search nodes were necessary to (cid:2)nd a so-
+lution using any heuristic, making comparisons based on
+node expansions dif(cid:2)cult. For about two thirds of the solved
+tasks, less than 100 nodes were expanded, and for about 90%
+of them, less than 1000 nodes were expanded (independent
+of the heuristic). Comparing the most successful planners
+CG and CGFF on a domain-by-domain basis, CG expanded
+many nodes less in the SATELLITE and ZENOTRAVEL do-
+mains and many nodes more for GRIPPER tasks.
+
+Differences in plan quality were very slight: Among the
+tasks solved by all three heuristics, the average plan lengths
+were 44.5 for CG, 43.6 for CGFF, and 45.8 for CGHSP.
+
+In our second experiment, we compared the performance
+of CG to other domain-independent planning systems from
+the literature. The experiment showed that two planners, FF
+and LPG, could solve considerably more tasks than the other
+systems we tested, so only these two planners are shown
+in the experimental results (Fig. 12, this time listing total
+running time for CG, not search time).9
+
+The (cid:2)gure shows that CG (cid:2)nds more plans within seconds
+than LPG (cid:2)nds at all, and that it (cid:2)nds more plans in one
+
+9LPG was run using the (cid:147)fast(cid:148) competition settings. Because of
+the large random variation in LPG’s performance, we solved each
+task (cid:2)ve times and kept the result with median completion time.
+
+ 
+
+s
+k
+s
+a
+T
+d
+e
+v
+o
+S
+
+l
+
+540
+
+520
+
+500
+
+480
+
+460
+
+440
+
+420
+
+400
+
+CG
+FF
+LPG
+
+0s
+
+50s
+
+100s
+
+150s
+
+200s
+
+250s
+
+300s
+
+Total Time
+
+Domain
+
+BLOCKSWORLD
+
+DEPOT
+
+DRIVERLOG
+FREECELL
+
+GRID
+
+GRIPPER
+
+LOGISTICS-1998
+LOGISTICS-2000
+
+MICONIC
+MOVIE
+MPRIME
+MYSTERY
+ROVERS
+SATELLITE
+ZENOTRAVEL
+
+easy
+0.07s
+0.13s
+0.10s
+3.31s
+1.72s
+0.11s
+0.49s
+0.06s
+0.08s
+0.04s
+0.77s
+0.19s
+0.06s
+0.16s
+0.12s
+
+median
+0.17s
+1.21s
+0.20s
+6.84s
+4.16s
+0.54s
+2.04s
+0.09s
+0.26s
+0.04s
+2.32s
+0.91s
+0.18s
+0.64s
+0.32s
+
+dif(cid:2)cult
+0.51s
+1.61s
+0.53s
+16.05s
+14.14s
+2.01s
+7.24s
+0.13s
+0.59s
+0.05s
+9.59s
+2.76s
+0.53s
+2.25s
+2.67s
+
+Figure 12: Comparison of the CG, FF and LPG planners.
+
+Figure 13: CG solution times.
+
+minute than FF does in (cid:2)ve minutes. However, the compar-
+atively low numbers for LPG are mainly due to the FREE-
+CELL domain and should not be overinterpreted. Fig. 11,
+which shows the number of unsolved tasks by planner and
+domain, provides a clearer picture of the different strengths
+and weaknesses of the planners we tested.
+
+The average plan length was 50.3 for CG, 42.1 for FF,
+and 54.6 for LPG (only considering tasks solved by all three
+planners). Thus, CG produced shorter plans than LPG but
+longer plans than FF. In detail, CG produced much longer
+plans than FF in the domains BLOCKSWORLD, DEPOT,
+GRIPPER, LOGISTICS and MICONIC. Since CG and CGFF
+computed plans of similar quality, we attribute this differ-
+ence in plan quality to the search strategy, not the heuristic.
+We close our presentation of results with Fig. 13, which
+gives an impression of the scaling behavior of CG in the
+individual domains. For each domain, the table lists the so-
+lution time for (cid:147)easy(cid:148), (cid:147)median(cid:148) and (cid:147)dif(cid:2)cult(cid:148) tasks. These
+values were obtained by sorting the solved tasks by solution
+time and taking the values at 25% (easy), 50% (median) and
+75% (dif(cid:2)cult) of the spectrum. For example, if 40 tasks
+were solved, the 10th, 20th and 30th position are reported.
+
+We conclude that CG compares favorably with the state of
+the art in STRIPS planning. We believe that the performance
+of the planner can be enhanced further by adapting some of
+the search enhancements popularized by FF, namely help-
+ful action pruning and goal agenda management. More than
+half of the tasks that CG cannot solve belong to the DEPOT
+domain. The fact that CGFF is also weak in the DEPOT do-
+main while FF is much better suggests that FF’s better search
+control is very useful for these tasks.
+
+Discussion
+
+We have presented a novel approach to heuristic planning
+that is based on decomposing the causal graph of a trans-
+lated planning task into a sequence of easier SAS+-1 tasks.
+We provided an in-depth analysis of SAS+-1 planning and
+showed that a heuristic planning system based on SAS+-1
+tasks is competitive with the state of the art.
+
+Interestingly, Fig. 11 shows that CG has distinctly other
+weaknesses than FF or LPG. To us, this signi(cid:2)es that al-
+ternative ways of relaxing planning tasks have not yet been
+explored in suf(cid:2)cient depth.
+
+We see three major options for building on the results pre-
+
+sented in this paper:
+† The search control and speed of the planner could be im-
+proved. For example, FF’s helpful actions can be adapted
+into this context. Considering the dif(cid:2)culties with the DE-
+POT domain, goal ordering techniques should be tried.
+The speed of the planner could be improved by reusing
+heuristic estimates for subproblems that are encountered
+repeatedly during search.
+
+† The planner could be integrated with an FF-like approach
+to combine the strengths of the CG and FF heuristics in
+an orthogonal way.
+
+† The planner could be extended to more general planning
+formalisms, such as ADL, planning with domain axioms,
+or planning with (limited) numerical state variables.
+We have made some encouraging (cid:2)rst steps in the (cid:2)rst two
+directions. Experiments with helpful actions have led to an
+improved planner which solves all but eleven of the bench-
+mark tasks, all unsolved instances being from the DEPOT
+and FREECELL domains.
+
+In another experiment, we have implemented a planner
+which computes both the CG and FF estimates of each state
+and alternates between expanding the open state with lowest
+CG value and the open state with lowest FF value. This
+planner was able to solve many of the tasks on which CG
+failed. Interestingly, it could also solve some tasks where
+both CG and FF failed, indicating that the two heuristics can
+sometimes be combined orthogonally.
+
+References
+
+Bacchus, F., and Yang, Q. 1994. Downward re(cid:2)nement and
+the ef(cid:2)ciency of hierarchical problem solving. Arti(cid:2)cial
+Intelligence 71(1):43(cid:150)100.
+
+ICAPS 2004    169  
+
+Sixth International Conference on Arti(cid:2)cial Intelligence
+Planning and Scheduling (AIPS 2002), 92(cid:150)100. AAAI
+Press.
+Jonsson, P., and B¤ackstr¤om, C. 1998. State-variable plan-
+ning under structural restrictions: Algorithms and com-
+plexity. Arti(cid:2)cial Intelligence 100(1(cid:150)2):125(cid:150)176.
+Knoblock, C. A. 1994. Automatically generating abstrac-
+tions for planning. Arti(cid:2)cial Intelligence 68(2):243(cid:150)302.
+Refanidis, I., and Vlahavas, I. 1999. GRT: A domain in-
+dependent heuristic for STRIPS worlds based on greedy
+regression tables.
+In Fox, M., and Biundo, S., eds., Re-
+cent Advances in AI Planning. 5th European Conference on
+Planning (ECP’99), volume 1809 of Lecture Notes in Arti-
+(cid:2)cial Intelligence, 347(cid:150)359. New York: Springer-Verlag.
+Williams, B. C., and Nayak, P. P. 1997. A reactive planner
+for a model-based executive. In Pollack, M. E., ed., Pro-
+ceedings of the 15th International Joint Conference on Ar-
+ti(cid:2)cial Intelligence (IJCAI’97), 1178(cid:150)1195. Morgan Kauf-
+mann.
+
+B¤ackstr¤om, C., and Nebel, B. 1995. Complexity results for
+SAS+ planning. Computational Intelligence 11(4):625(cid:150)
+655.
+Bonet, B., and Geffner, H. 2001. Planning as heuristic
+search. Arti(cid:2)cial Intelligence 129(1):5(cid:150)33.
+Bonet, B.; Loerincs, G.; and Geffner, H. 1997. A ro-
+bust and fast action selection mechanism for planning. In
+Kuipers, B. J., and Webber, B., eds., Proceedings of the
+Fourteenth National Conference on Arti(cid:2)cial Intelligence
+(AAAI-97), 714(cid:150)719. AAAI Press.
+Domshlak, C., and Brafman, R. I. 2002. Structure and
+complexity in planning with unary operators.
+In Ghal-
+lab, M.; Hertzberg, J.; and Traverso, P., eds., Proceed-
+ings of the Sixth International Conference on Arti(cid:2)cial In-
+telligence Planning and Scheduling (AIPS 2002), 34(cid:150)43.
+AAAI Press.
+Domshlak, C., and Dinitz, Y. 2001a. Multi-agent off-
+line coordination: Structure and complexity. In Cesta, A.,
+and Borrajo, D., eds., Pre-proceedings of the Sixth Euro-
+pean Conference on Planning (ECP’01), 277(cid:150)288. Toledo,
+Spain: Morgan Kaufmann.
+Domshlak, C., and Dinitz, Y. 2001b. Multi-agent off-line
+coordination: Structure and complexity. Technical Report
+CS-01-04, Ben-Gurion University of the Negev.
+Edelkamp, S., and Helmert, M. 1999. Exhibiting knowl-
+edge in planning problems to minimize state encoding
+length.
+In Fox, M., and Biundo, S., eds., Recent Ad-
+vances in AI Planning. 5th European Conference on Plan-
+ning (ECP’99), volume 1809 of Lecture Notes in Arti(cid:2)cial
+Intelligence, 135(cid:150)147. New York: Springer-Verlag.
+Edelkamp, S., and Helmert, M. 2000. On the imple-
+mentation of MIPS. Paper presented at the Fifth Interna-
+tional Conference on Arti(cid:2)cial Intelligence Planning and
+Scheduling, Workshop on Model-Theoretic Approaches to
+Planning. Breckenridge, Colorado, 14 April.
+Fox, M., and Long, D. 1998. The automatic inference of
+state invariants in TIM. Journal of Arti(cid:2)cial Intelligence
+Research 9:367(cid:150)421.
+Garey, M. R., and Johnson, D. S. 1979. Computers and In-
+tractability (cid:151) A Guide to the Theory of NP-Completeness.
+Freeman.
+Gerevini, A., and Schubert, L. 1998. Inferring state con-
+straints for domain-independent planning. In Rich, C., and
+Mostow, J., eds., Proceedings of the Fifteenth National
+Conference on Arti(cid:2)cial Intelligence (AAAI-98), 905(cid:150)912.
+AAAI Press.
+Helmert, M. 2001. On the complexity of planning in trans-
+portation domains. In Cesta, A., and Borrajo, D., eds., Pre-
+proceedings of the Sixth European Conference on Planning
+(ECP’01), 349(cid:150)360. Toledo, Spain: Morgan Kaufmann.
+Hoffmann, J., and Nebel, B. 2001. The FF planning sys-
+tem: Fast plan generation through heuristic search. Journal
+of Arti(cid:2)cial Intelligence Research 14:253(cid:150)302.
+2002. Local search topology in plan-
+Hoffmann, J.
+ning benchmarks: A theoretical analysis. In Ghallab, M.;
+Hertzberg, J.; and Traverso, P., eds., Proceedings of the
+
+170    ICAPS 2004   
+
+

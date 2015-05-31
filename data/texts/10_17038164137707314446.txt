@@ -1,0 +1,1042 @@
+Implementing Fast Heuristic Search Code
+
+Ethan Burns and Matthew Hatem and Michael J. Leighton and Wheeler Ruml
+
+Department of Computer Science
+
+University of New Hampshire
+
+Durham, NH 03824 USA
+
+eaburns, mhatem, mjr58, ruml at cs.unh.edu
+
+Abstract
+
+Published papers rarely disclose implementation details. In
+this paper we show how such details can account for speedups
+of up to a factor of 28 for different implementations of the
+same algorithm. We perform an in-depth analysis of the most
+popular benchmark in heuristic search: the 15-puzzle. We
+study implementation choices in C++ for both IDA* and A*
+using the Manhattan distance heuristic. Results suggest that
+several optimizations deemed critical in folklore provide only
+small improvements while seemingly innocuous choices can
+play a large role. These results are important for ensuring
+that the correct conclusions are drawn from empirical com-
+parisons.
+
+Introduction
+
+Implementing efﬁcient heuristic search code can be quite
+difﬁcult, especially for a new practitioner who has merely
+read Russell and Norvig (2010) and is not familiar with all of
+the tricks of the trade. This paper focuses on these undocu-
+mented tricks. Our purpose is not to promote code optimiza-
+tion over algorithmic improvements—we agree with the
+commonly accepted truism that a better algorithm will out-
+perform a better implementation (McGeoch 2012)—rather,
+the goals of this paper are to indicate the performance of
+an efﬁcient tiles solver as a function of CPU performance,
+demonstrate tricks that are used in state-of-the-art imple-
+mentations such as Korf’s IDA* solver (Korf 1985), to show
+which of these improvements have the greatest effect, and
+to increase the overall quality of empirical work in heuristic
+search by reducing the effect that programmer skill has on
+the outcome of empirical comparisons.
+
+Many of the results in this paper focus on solving time.
+We argue that this is a necessary evil for heuristic search,
+because there is currently no good theory to generate ﬁne-
+grained predictions of algorithmic performance that are suf-
+ﬁcient for comparing different techniques. Traditional com-
+plexity analysis provides imprecise bounds on scaling be-
+havior. Performance predictors such as those used in portfo-
+lios (Xu et al. 2008) only predict the performance of an im-
+plementation and not that of algorithmic techniques. Other
+methods such as CDP (Zahavi et al. 2010) and BLFS (Rose,
+Copyright c(cid:13) 2012, Association for the Advancement of Artiﬁcial
+Intelligence (www.aaai.org). All rights reserved.
+
+Burns, and Ruml 2011) predict the number of nodes ex-
+panded, however metrics such as node expansions aren’t in-
+dicative of search performance since they do not account
+for computational overhead. For example, all implementa-
+tions shown in Table 1 expand the same number of nodes,
+yet, there is over a 14× difference in solving times. Because
+practitioners usually care about how quickly a problem is
+solved, we are left comparing algorithms directly on solving
+time.
+
+The difference between a fast implementation and a slow
+implementation of the same algorithm can be signiﬁcant
+enough to lead to incorrect conclusions from empirical stud-
+ies. It can even be unfair when two algorithms have equally
+‘slow’ implementations, as speed-ups can affect different al-
+gorithms differently. Furthermore, reviewers often demand
+state-of-the-art results. During a recent reviewer discussion,
+one of us saw a review that said, “I have no conﬁdence
+that the authors’ algorithm is any faster than Korf’s origi-
+nal IDA* code on these problems, and may in fact be a good
+bit slower. Thus, there are really no relevant positive exper-
+imental results in this paper, in my opinion.” There was no
+claim that the results in question were incorrect or that the
+paper’s algorithmic ideas were without merit, just that the
+authors of the rejected paper were not familiar with all of
+the tricks that are required to achieve state-of-the-art per-
+formance. Currently, it can be difﬁcult to ﬁnd these tricks
+without looking at Korf’s source code directly, which itself
+does not indicate which optimizations are important. In this
+paper, we remedy this problem.
+
+We will focus on the two most popular heuristic search
+algorithms, IDA* and A*, and the most popular benchmark
+domain, the 15-puzzle. We aggregate and document the per-
+formance impact of many common and uncommon imple-
+mentation choices in a single paper that can be drawn upon
+by heuristic search researchers, especially practitioners who
+are new to the ﬁeld. Even senior researchers may ﬁnd some
+of our results surprising. Full source code is available at
+www.search-handbook.org/code/socs12.
+
+IDA*
+
+The 15-puzzle (Slocum and Sonneveld 2006) consists of a
+4x4 board of 15 numbered tiles and a blank space into which
+adjacent tiles can be slid. The goal is to take a given con-
+ﬁguration and to slide the tiles around until they are in the
+
+25Proceedings of the Fifth Annual Symposium on Combinatorial Searchgoal conﬁguration with the blank in the upper-left corner
+and the tiles numbered 1–15 in left-to-right, top-to-bottom
+order. The puzzle has 16!/2 = 10, 461, 394, 944, 000 reach-
+able states, and so it is often infeasible to solve it using
+a memory-bound search algorithm such as A* (Hart, Nils-
+son, and Raphael 1968) with the classic Manhattan distance
+heuristic that sums the horizontal and vertical distance from
+each tile to its goal location. Iterative-deepening A* (IDA*,
+Korf 1985) uses an amount of memory that is only linear in
+the maximum search depth, and was the ﬁrst algorithm to
+reliably solve random 15-puzzle instances. IDA* performs
+a series of f-value-bounded depth-ﬁrst searches. When one
+bounded search fails to ﬁnd a solution, the bound is in-
+creased to the minimum f value that was out-of-bounds on
+the previous iteration and the search begins again.
+The Base Implementation
+We begin with a base implementation indicative of what may
+be created by a new heuristic search researcher. Since re-
+searchers often want to run experiments on multiple domains
+using multiple algorithms, our base implementation requires
+any search domain to implement a simple interface with ﬁve
+virtual methods (which, in C++, are equivalent to singly-
+indirect function calls): initial returns the initial state; h
+returns the heuristic value; isgoal returns true if the given
+state is a goal; expand returns a vector (in C++, this is a
+dynamically sized array) containing information about the
+successors of the given state; and release frees a search
+state. From the search algorithm’s perspective, each state is
+an opaque pointer that refers to an object for which the in-
+ternal representation is unknown, allowing the same IDA*
+code to be used across many different domains.
+
+In the sliding tiles implementation, each state is a record
+containing a ﬁeld called blank to track the current blank po-
+sition, a ﬁeld h with the cost-to-go estimate computed at
+generation, and an array tiles of 16 integers (we tried bytes,
+however, they decreased performance of IDA* by a factor of
+0.9), storing the tile at each board position. Given this rep-
+resentation, the h, isgoal, and release functions are all
+simple one-liners: h returns the h ﬁeld; isgoal return true
+if h = 0; and release uses C++’s delete keyword. The
+initial function allocates and returns a new state with
+tile positions speciﬁed by the program’s input.
+
+Most of the domain’s implementation is in the expan-
+sion function. Figure 1 shows high-level pseudo-code for
+expand. This pseudo-code almost exactly matches the C++
+code; in the real implementation each vector entry contains
+not only a successor state but also the generating operator
+represented as the destination blank position and the opera-
+tor that would re-generate the parent state. This operator in-
+formation is used to remove simple 2-cycles during search.
+The constant Ntiles = 16 represents the number of entries
+in the .tiles array of each state, and Width = 4 is the num-
+ber of columns in the 4x4 tiles board.
+
+The EXPAND function tests each operator (up, left, right,
+and down, the same order used by Korf’s solver) for appli-
+cability (lines 2, 4, 6, and 8), and for each applicable oper-
+ator a new child is added to the kids vector (lines 3, 5, 7,
+and 9). Each child is generated by creating a new state (line
+
+EXPAND(State s)
+
+1. vector kids // creates an empty vector
+2. if s.blank ≥ Width then
+kids.push(KID(s, s.blank − Width))
+3.
+4. if s.blank mod Width > 0 then
+kids.push(KID(s, s.blank − 1))
+5.
+6. if s.blank mod Width < Width − 1 then
+7.
+kids.push(KID(s, s.blank + 1))
+8. if s.blank < Ntiles − Width then
+9.
+10. return kids
+
+kids.push(KID(s, s.blank + Width))
+
+KID(State s, int newblank)
+11. State kid = new State
+12. copy s.tiles to kid .tiles
+13. kid .tiles [s.blank ] = s.tiles [newblank ]
+14. kid .blank = newblank
+15. kid .h = MANHATTAN-DIST(kid .tiles, kid .blank)
+16. return kid
+Figure 1: The base implementation’s expand function.
+
+11), copying the parent’s tiles array (line 12), updating the
+position of the tile that was moved (line 13, note that we
+don’t bother to update kid .tiles [newblank ] = 0), tracking
+the new blank position (line 14), and computing the Man-
+hattan distance (line 15). Each node generation allocates a
+new state record because, as mentioned before, the search
+relies on opaque pointers to allow the same code to work for
+multiple domains.
+
+We ran our base implementation of IDA* on all 100
+15-puzzle instances from Korf (1985). We used a Dell
+PowerEdge T710 with dual quad-core Intel Xeon X5550
+2.66Ghz processors and 48GB RAM running Ubuntu Linux.
+All binaries were compiled with GCC version 4.4.3-
+4ubuntu5.1 using the -O3 ﬂag. The total search time re-
+quired to solve all instances was 9,298 seconds.
+
+Incremental Manhattan Distance
+One popular optimization for the sliding tiles puzzle is to
+compute the Manhattan distance value of each state incre-
+mentally. Since only one tile moves at a time, the Manhattan
+distance of a new state can be computed from its parent’s
+by subtracting the Manhattan distance for the moving tile
+and adding its new Manhattan distance. Our implementation
+of this optimization is based on the one from Korf’s solver:
+we pre-compute the change in Manhattan distance for every
+possible single move of each tile and store them in a table
+before searching. The heuristic computation then becomes
+a table lookup and an addition (see Figure 3, line 27). With
+this slight modiﬁcation (46 additional lines of code, includ-
+ing blank lines and comments), the new time to solve all 100
+instances drops down to 5,476 seconds, almost a factor of 2
+improvement.
+
+Operator Pre-computation
+We reduce expansion overhead even further by pre-
+computing applicable operators—another optimization used
+in Korf’s solver. Instead of using four if-statements to de-
+termine whether the four positions adjacent to the blank are
+
+26EXPAND(State s)
+17. vector kids // creates an empty vector
+18. for i = 0 to optab [s.blank ] .n − 1 do
+19.
+20. return kids
+Figure 2: The new expand function with an operator table.
+
+kids.push(KID(s, optab [s.blank ] .ops [i]))
+
+NOPS(State s)
+
+21. return optab [s.blank ] .n
+
+NTHOP(State s, int n)
+
+22. return optab [s.blank ] .ops [n]
+
+APPLY(State s, int newblank)
+
+23. Undo u = new Undo()
+24. u.h = s.h; u.blank = s.blank
+25. tile = s.tiles [newblank ]
+26. s.tiles [s.blank ] = tile
+27. s.h + = mdincr [tile] [newblank ] [s.blank ]
+28. s.blank = newblank
+
+UNDO(State s, Undo u)
+
+29. s.tiles [s.blank ] = s.tiles [u.blank ]
+30. s.h = u.h; s.blank = u.blank
+31. delete u
+
+Figure 3: Changes for in-place modiﬁcation.
+
+legal, we can pre-compute the legal successor positions for
+each of the 16 possible blank locations before searching and
+store them in an ‘operator table.’ Figure 2 shows the new ex-
+pand function. While this optimization only adds about 17
+lines of code, it only improves the performance a little. The
+new time for all 100 instances is reduced to 5,394 seconds,
+only a 1.015 factor improvement.
+
+In-place Modiﬁcation
+The main source of remaining overhead in the expansion
+function is the copy performed when generating each new
+successor (line 12 in Figure 1). Since IDA* only considers a
+single node for expansion at a time, and because our recur-
+sive implementation of depth-ﬁrst search always backtracks
+to the parent before considering the next successor, it is pos-
+sible to avoid copying entirely. We will use an optimization
+called in-place modiﬁcation where the search only uses a
+single state that is modiﬁed to generate each successor and
+reverted upon backtracking. The beneﬁts are threefold. First,
+there is no need to copy the state. In any domain where the
+cost of applying an operator plus the subsequent undo to re-
+vert back to the parent is cheaper than the cost of copying
+the state, avoiding the copy will be beneﬁcial. The second
+beneﬁt is that there is no need to allocate successor states.
+While memory is not a concern with depth-ﬁrst search, the
+cost of allocation can be quite expensive. Finally, because
+only a single state is used, it is quite likely that this state will
+remain in the cache for very fast access.
+
+To handle in-place modiﬁcation we add four methods and
+one additional record type to our search domain interface.
+The functions are: nops to get the number of applicable op-
+erators in a state, nthop to get the nth operator, used to
+eliminate simple 2-cycles, apply to apply an operator to a
+state, and undo to revert the application of an operator. The
+
+result of applying an operator is an ‘undo record’ that holds
+information used by undo to revert change. For tiles, this
+information is the heuristic value and blank position of the
+parent. Figure 3 shows the modiﬁcations required to handle
+in-place modiﬁcation. Undo records are treated as opaque
+pointers by the search algorithm, much as states were pre-
+viously, and thus they are allocated on the heap. (Alloca-
+tions could be avoided by keeping a stack of undo records,
+however, the next optimization will remove the need for any
+opaque pointers and all allocations). Using in-place modiﬁ-
+cation, the search time required is 2,179 seconds, approxi-
+mately a 2.5 factor improvement over the previous version.
+
+C++ Templates
+The ﬁnal optimization that we present for IDA* is to replace
+virtual method calls with C++ templates. C++ templates are
+a form of meta-programming that allow functions to be pa-
+rameterized on a given type, or a class (many popular lan-
+guages provide similar functionality). In C++, template in-
+stantiation is similar to a ﬁnd-and-replace, or a macro ex-
+pansion that replaces references to our search domain with
+the methods from the domain class itself. Just as before, we
+parameterize the search algorithm on the search domain, ex-
+cept instead of using virtual calls, the template instantiates
+our search algorithm at compile-time with the given param-
+eter class. This means that all virtual method calls are re-
+placed with normal function calls that the compiler will then
+inline. An additional beneﬁt of using C++ templates for our
+search algorithm is that the algorithm can refer directly to
+the search state record deﬁned by the domain, eliminating
+any need for opaque pointers and all memory allocation.
+The resulting machine code should look as though we wrote
+the search algorithm speciﬁcally for our sliding tiles solver
+when in fact it is generalized to any search domain that im-
+plements our interface.
+
+Using our template implementation along with the three
+previous optimizations, all of the 100 tiles instances are
+solved in 634 seconds. This is a 3.4 factor improvement over
+the previous implementation and a 14.7 factor improvement
+over our initial base implementation. In fact, our base imple-
+mentation required more time to solve each of instances 60,
+82, and 88 than our ﬁnal implementation needed to solve the
+entire set!
+
+Operator Ordering
+The choice of operator ordering can have a signiﬁcant effect
+on the performance of IDA*, as a good ordering can effec-
+tively eliminate the ﬁnal (largest) iteration of search and a
+bad ordering will enumerate the entire iteration. There are
+only 4! = 24 possible ﬁxed operator orderings for the slid-
+ing tile puzzle, so we solved Korf’s puzzle instances with
+each one using our most optimized solver. Surprisingly, it
+seems that not all instances are affected by operator order-
+ing to the same degree. For example, operator order has a
+signiﬁcant effect on the solving time for instance 82 but has
+seemingly no effect on instance 88. Also, half of the order-
+ings seem to take about twice as long as the other half. The
+best ordering on Korf’s 100 instances (up, right, left, down)
+
+27nodes/sec
+imp.
+1,982,479
+–
+Base implementation
+1.7×
+3,365,735
+Incremental heuristic
+1.7×
+3,417,218
+Oper. pre-computation
+2.3×
+8,457,031
+In-place modiﬁcation
+14.7× 29,074,838
+C++ templates
+14.0× 27,637,121
+Korf’s solver
+Table 1: IDA* performance on Korf’s 100 15 puzzles.
+
+secs
+9,298
+5,476
+5,394
+2,179
+634
+666
+
+required 628 seconds to solve the entire set. The median or-
+dering (up, down, left, right) needed 728 seconds and the
+absolute worst ordering (left, down, up, right) needed 942
+seconds. Korf’s operator ordering was the 2nd best ordering
+for these instances.
+
+Summary
+Table 1 shows a summary of the performance of all of the
+optimizations that we implemented for IDA*. As a refer-
+ence, the performance of Korf’s implementation is shown
+as the last row. Korf’s solver is written in C and it includes
+all of the optimizations that were listed here, except for the
+use of C++ templates which are unnecessary as the solver is
+domain-speciﬁc. Korf’s solver is a bit slower than the fastest
+implementation in this table, this is probably a product of
+minor differences between the code generated by the C and
+C++ compilers. The column labelled ‘imp.’ shows the im-
+provement over the base implementation, e.g., the time re-
+quired by the base implementation was 2.3 times more than
+that required by the variant that uses all optimizations up
+to and including in-place modiﬁcation. Finally, the column
+labeled ‘nodes/sec’ shows the expansion rate for each vari-
+ant. All implementations in this table expanded a total of
+18,433,671,328 nodes summed over all instances, so all im-
+provements can be credited to the implementation, and not a
+reduction in search effort. With the exception of operator
+pre-computation, each optimization approximately halves
+the time required to solve the instance set, with the ﬁnal
+implementation being greater than a factor of 14.7 improve-
+ment over the base implementation.
+
+Based on Table 1, we would recommend using all of these
+optimizations in an efﬁcient implementation of IDA* with
+the exception of operator pre-computation which seems un-
+necessary. In some cases it may be impossible to implement
+the template optimization. In these cases, the performance
+beneﬁts that we gained with templates can instead be real-
+ized by sacriﬁcing generality and implementing a domain-
+speciﬁc solver.
+
+Scaling Study
+To allow comparison to our timing results, we performed
+a study of our optimized solver’s performance across a va-
+riety of different hardware. We compare the results of the
+SPECint base rating of various machines (from the SPEC
+CPU 2006 benchmark set, which evaluates the integer pro-
+cessing capabilities of hardware) to the time required for our
+IDA* implementation to solve all 100 of Korf’s 15-puzzles.
+Figure 4a shows the scaling behavior across six differ-
+ent machines with SPECint base numbers of: 15.8, 16.5,
+
+22.2, 29.3, 35.6, and 40.0; the greater the number, the faster
+the hardware performed on the CPU 2006 benchmark. The
+circles represent the actual data points and the dashed line
+shows the line of best ﬁt (y = −10.8x + 973). As expected,
+machines with greater SPECint base numbers tended to
+solve our instance set faster; the slowest hardware required
+50% more time than the fastest. Using these results, we hope
+that future researchers can ﬁnd their machines on the SPEC
+website (www.spec.org) to estimate how fast an efﬁcient im-
+plementation should perform on Korf’s instance set.
+
+Case Studies
+
+To validate the results from the previous section, we per-
+formed three case studies where independently created
+search implementations were subjected to the optimizations
+described above. These case studies further emphasize the
+importance of using the correct optimizations, as in two
+cases an incorrect conclusion was drawn from an empirical
+study using an unoptimized IDA* implementation.
+
+Objective Caml
+First, we compare three sliding tile solvers written in the
+Objective Caml (OCaml) programming language. The ﬁrst
+two were existing solvers that were written to operate on
+many different search domains. The ﬁrst solver was the least
+optimized; it only included the incremental Manhattan dis-
+tance optimization and required 24,186 seconds to solve all
+of Korf’s instances. The second solver included all optimiza-
+tions listed above except for compile-time templates as they
+are not available in the language; it required 3,261 seconds
+to solve all instances, a 7.4 factor improvement on its prede-
+cessor. Finally, we wrote a new implementation speciﬁcally
+for tiles solving, i.e., it did not operate on an abstract repre-
+sentation of the search domain. The new solver was able to
+solve all instances in 852 seconds, a 3.8x improvement over
+the second implementation, which approximately matches
+the improvement we saw when switching the C++ imple-
+mentation to use templates, and a 28× improvement over
+the ﬁrst, unoptimized version!
+
+Short Circuit
+The next implementation we consider was created to eval-
+uate the state-of-the-art hierarchical search algorithm called
+Short Circuit (Leighton, Ruml, and Holte 2011). IDA* was
+already implemented in Short Circuit’s C++ code base; it
+used the same state and goal representation, successor func-
+tion, and goal test as the Short Circuit algorithm, but none
+of the optimizations described above were present in ei-
+ther IDA* or Short Circuit. The initial IDA* implementation
+took 6,162 seconds to solve all of Korf’s 100 15-puzzles and
+Short Circuit was nearly 3 times faster, requiring 2,066 sec-
+onds. We then modiﬁed both Short Circuit and IDA* taking
+into account the optimizations described above where ap-
+plicable. The speedups achieved by the new IDA* over the
+base implementation were: incremental Manhattan distance
+computation 2.0×, operator pre-computation only 2.1×, in-
+place modiﬁcation 3.6×, and templates only gave a 4.8×
+speedup. With the exception of the template optimization,
+
+28Figure 4: Solving time versus SPECint base (a), and PEDAL compared to the original (b) and improved (c) IDA*.
+
+(a)
+
+(b)
+
+(c)
+
+which surprisingly didn’t boost performance as much as it
+did for our optimized solver, these numbers tend to agree
+with the results in Table 1.The new IDA* implementation
+was able to solve all 100 instances in 1,316 seconds. Only
+two of the optimizations were applicable to Short Circuit,
+operator pre-computation and removal of virtual methods,
+allowing Short Circuit to solve all instances in 1,886 sec-
+onds. As we can see, the 3× performance advantage that
+Short Circuit had over IDA* can be attributed to inefﬁcien-
+cies in the implementation. An IDA* implementation with
+state-of-the-art optimization techniques is faster than Short
+Circuit in this domain. Note that the results presented by
+Leighton, Ruml, and Holte (2011) are still valid, as IDA* on
+the 15-puzzle with Manhattan distance is expected to out-
+perform Short Circuit. Short Circuit was also shown to work
+well on other domains better suited for hierarchical search.
+
+PEDAL
+Hatem, Burns, and Ruml (2011) introduced a new external-
+memory search algorithm called Parallel External search
+with Dynamic A* Layering (PEDAL) While the unit-cost
+15 puzzle is not a domain for which PEDAL was specif-
+ically designed, PEDAL was shown to compare favorably
+to IDA* on Korf’s 100 instances. During the presentation
+of our paper at AAAI 2011, an audience member pointed
+out that Korf’s solver was signiﬁcantly faster than the solver
+used in the PEDAL comparison. 1
+
+We have updated both the IDA* and PEDAL implemen-
+tations using all of the optimizations described above where
+applicable with the exception of templates, as this would
+have required a major change to the PEDAL code base. Fig-
+ure 4b shows the results of the original comparison using
+the original IDA* operator ordering from the paper, and Fig-
+ure 4c shows the results with improved implementations of
+PEDAL and IDA*, using Korf’s operator ordering. The axes
+of these plots show the time required for PEDAL (y axis) and
+IDA* (x axis) to solve each instance, represented by a circle
+in the plot. The diagonal line shows y = x, and circles above
+the line are instances where IDA* performed better, whereas
+circles below represent instances where PEDAL performed
+better. With these implementations, PEDAL no longer out-
+performs IDA*, however further optimization of PEDAL’s
+I/O may change the picture again yet again.
+
+1This remark motivated the research leading to this paper.
+
+A*
+
+We now turn to the most popular heuristic search algorithm
+of all, A* (Hart, Nilsson, and Raphael 1968).
+
+The Base Implementation
+In our base implementation of A*, the open list is imple-
+mented as a binary min heap ordered on f and breaking ties
+by preferring high g, the closed list is implemented as a hash
+table using chaining to resolve collisions, and the ﬁelds of
+our state record were changed to bytes to conserve memory.
+The A* algorithm is modeled after the one described in the
+2nd (older) edition of Russell and Norvig (2003) it allows
+duplicate search states to each have a node on the open list.
+This implementation required 1,695 seconds to solve all of
+the 100 instances with the exception of three instances that
+exhausted a 46 gigabyte memory limit (instances 60, 82, and
+88). For reference, our heavily optimized IDA* solver re-
+quired only 370 seconds to solve these 97 instances. When
+we include both the incremental Manhattan distance and the
+operator table optimizations as described for IDA*, solving
+time only decreases to 1,513 seconds. This is because A*
+spends much of its time operating on its open list and per-
+forming hash table lookups, so these optimizations have lit-
+tle effect.
+
+Detecting Duplicates on Open
+One common optimization is to maintain only a single node
+for each state and to update the nodes location on the open
+list if it is re-encountered via a cheaper path. This optimiza-
+tion has become so common that it is now used in the A*
+pseudo-code in the 3rd (the latest as of this writing) edition
+of Russell and Norvig (2010), and in the Heuristic Search
+book by Edelkamp and Schr¨odl (2012).
+
+With this optimization, each search state is represented
+by a single canonical node that is added to a hash table the
+ﬁrst time the state is generated. Each time a new state is
+generated, the hash table is checked for the canonical node,
+and if the canonical node is found and the newly generated
+state was reached via a cheaper path then the canonical node
+is updated. To update a node, its g value is set to the new
+lower g value, its f value is adjusted appropriately, its par-
+ent node is changed to be the parent that generated the node
+via the cheaper path, and ﬁnally its open list position is up-
+dated based on its new f value (note that we don’t bother
+
+29to check that the duplicate resides on the open list: because
+the Manhattan distance heuristic is consistent, the duplicate
+must be on open if a cheaper path to it was found). When
+generating a state, if the canonical node is not found in the
+hash table then it is the ﬁrst time that the state was generated,
+so it is added to both the open list and hash table, becoming
+the canonical representation.
+
+Using this optimization, the solving time for the 97 in-
+stances that were solvable within the memory limit was
+1,968 seconds, which is slower than the base implementa-
+tion. The reason for this slowdown is likely because this op-
+timization requires a hash table lookup for each node genera-
+tion. The hash table lookup is relatively expensive compared
+to the cost of a node expansion for the sliding tiles domain.
+Additionally, there are very few duplicates in the sliding tiles
+puzzle and so the extra testing for duplicates on the open
+list is not very helpful. This is a rather surprising result as
+this optimization seems to be quite ubiquitous. We suspect
+that in domains where hash table operations are inexpensive
+compared to the cost of expanding a node (as is the case in
+domain-independent planning) and domains where there are
+many duplicates (as is the case in grid pathﬁnding) this opti-
+mization is much more beneﬁcial. Due to the degradation in
+performance, this optimization is not used in the following
+subsections, however, we will revisit it brieﬂy after we speed
+up our closed list operations.
+C++ Templates
+One of the most beneﬁcial optimizations for IDA* was the
+switch from virtual method calls and requiring allocation for
+opaque pointers to the use of C++ templates. A* can be
+modiﬁed similarly. With IDA*, one of the beneﬁts of this
+optimization was obviating the need for any memory allo-
+cation. In A*, the amount of allocation can be reduced with
+this optimization as the domain interface doesn’t need to re-
+turn any heap allocated structures, however, A* still must
+allocate search nodes. Using this optimization, the time to
+solve the 97 instances drops to 1,273 seconds. In addition,
+with this optimization, the solver is now able to solve both
+instance 60 and 82 within the memory available on our ma-
+chine. The time required to solve all instances except for 88
+was 1,960 seconds.
+Pool Allocation
+A* is a memory-bound algorithm. This means that it will
+continue to consume more and more memory as it contin-
+ues to run. Memory allocation can be rather expensive and
+to alleviate the cost it is often beneﬁcial to allocate memory
+in a small number of large chunks instead of large number
+of small chunks. We modiﬁed our template-based A* solver
+to use an allocation pool to allocate nodes. The pool imple-
+mentation is rather simple: it allocates blocks of 1,024 nodes
+at a time (other values were tried with little effect). A node
+pool reduces the number of expensive heap allocations, and
+subsequently the memory overhead required to track many
+small heap-allocated nodes, and it has potential to increase
+cache locality by ensuring that nodes reside in contiguous
+blocks of memory. Using pool-based allocation, our solver
+was able to solve all 100 instances in 2,375 seconds and it
+
+required only 1,184 seconds for the 97 instances solved by
+the base. So far we have only achieved a 1.4 factor improve-
+ment from where we started.
+
+Packed State Representations
+The reason that we have yet to see a big improvement is that
+A* spends much of its time operating on the open and closed
+lists. Each closed list operation requires hashing a 16-entry
+array and possibly performing equality tests on this array
+to resolve hash collisions. Our open list is implemented as
+a binary heap which has O(log2 n) performance for insert,
+remove, and update operations. This optimization and the
+following ones attempt to optimize the access to data struc-
+tures. The ﬁrst such optimization is targeted at both reducing
+memory usage and the cost of hash table operations.
+
+For the 15-puzzle, the tiles are numbered 1–15, and thus
+each tile can be represented in 4 bits. Our current imple-
+mentation uses a byte for each tile. We can half the memory
+requirement for each tile state by packing the tiles into 8
+bytes. On the machine used in our experiments this is the
+size of a single word. As a consequence, our search states
+will take up half of the amount of memory, our hash func-
+tion can simply return the packed state representation, and
+equality tests performed by our hash table can be simpliﬁed
+to equality test between two numbers containing our packed
+state representation. The resulting solver was able to solve
+all 100 of Korf’s 15-puzzle instances in 1,896 seconds, and
+it only needed 1,051 seconds to solve the 97 instances solved
+by the base.
+
+Intrusive Data Structures
+Another way to optimize the hash table is to make it an ‘in-
+trusive’ hash table. Our hash table resolves collisions via
+chaining, and entries added to the hash table are wrapped
+in a record with two pointers: one to the entry and one to the
+next element in the chain, forming a linked list. Instead of al-
+locating a record for each hash table entry, we can ‘intrude’
+on the entries being stored in the table by requiring them to
+provide a next pointer for the hash table’s use. This reduces
+the memory requirement of A* by at least 16 bytes per node
+on a 64 bit machine, and it also reduces the number of al-
+locations. By using an intrusive hash table, our solving time
+for all 100 instances was 1,269 seconds and only 709 sec-
+onds for the 97 instances solved by the base implementation.
+Using all of these optimizations, we ﬁnally have achieved a
+2.4× performance improvement over the base.
+
+Since the last two optimizations targeted the performance
+of the hash table, it raises the question as to whether or not
+removing duplicate nodes from the open list would now be
+beneﬁcial. Previously, this optimization was disregarded be-
+cause the closed list operations were too costly to realize a
+beneﬁt. Unfortunately, removing duplicate nodes from the
+open list is still detrimental to performance even with the re-
+duction in the cost of accessing the hash table. Using all of
+these optimizations, the solving time when duplicate nodes
+are removed from the open list increases to 1,944 seconds
+for the set of 100 instances and 1,049 seconds for the 97 in-
+stances solved by the base solver. We conclude that it is not
+
+30worth avoiding duplicate nodes on the open list in a sliding
+tile puzzle solver.
+Array-based Priority Queues
+Now, we will take advantage of the fact that the sliding tiles
+domain has only unit-cost edges. This allows us to replace
+the binary heap used for our open list with a more efﬁcient
+data structure: a 1-level bucket priority queue (Dial 1969).
+A 1-level bucket priority queue is simply an array indexed
+by f values, and each entry in the array is a list of the nodes
+on the priority queue with the corresponding f value. In the
+15-puzzle, there are only a small number of possible f val-
+ues, and each of these possible values is a small integer. An
+1-level bucket priority queue allows constant-time insert, re-
+move, and update operations in our open list.
+
+Insertion into the priority queue simply adds the inserted
+node to the front of the list at the array index corresponding
+to the node’s f value. Since there is a ﬁxed number of possi-
+ble f values, lookup can be performed by quickly ﬁnding the
+smallest array index with a non-empty list. This operation
+can be sped up slightly by keeping track of a conservative
+estimate of the minimum array index on each insertion op-
+eration (see Edelkamp and Schr¨odl (2012) for details). This
+is a big improvement over the O(log2 n) operations a binary
+heap, especially considering the fact that the open list can
+contain hundreds of millions of nodes and it is accessed in
+a very tight loop. Using a 1-level bucked priority queue, our
+A* solver was able to solve all 100 instances in 727 seconds
+and the 97 instances solved by the base implementation in
+only 450 seconds. At this point, our A* solver is nearly on
+par with our IDA* solver in terms of time.
+
+One thing that is lost with the 1-level bucket priority
+queue is good tie breaking. Recall that our binary heap or-
+dered nodes by increasing f values, breaking ties by prefer-
+ring nodes with higher g. The reasoning is that the goal can
+be found more quickly in the ﬁnal f layer of search. The
+1-level bucket priority queue achieves constant time inser-
+tions and removals by appending to and removing from a
+list, leaving the list itself unsorted; ties are broken in last-in-
+ﬁrst-out order. Our ﬁnal optimization uses a nested variant of
+the 1-level bucket priority queue. In essence, this new struc-
+ture is a 1-level bucket priority queue ordered on f where
+each entry is in fact another 1-level bucket priority queue or-
+dered on g (this is slightly different from the 2-level bucket
+priority queue described by Edelkamp and Schr¨odl 2012, as
+our goal is to introduce tie-breaking and the 2-level queue is
+to reduce the size of the structure in the face of many distinct
+f values). Since insertion and removal are constant time for
+both the outer and inner queues, they are also constant time
+for the 2-dimensional priority queue. Using this ﬁnal opti-
+mization, our solver was able to solve all 100 instances in
+516 seconds, and the 97 instances solved by the base only
+needed 290 seconds, giving a 5.8× improvement over the
+base implementation.
+Summary
+Table 2 shows a summary of the results for all optimiza-
+tions on the 97 instances solved by the base implementa-
+tion. We have included a column showing the maximum
+
+Base implementation
+Incr. MD and oper. table
+Avoiding dups on open
+C++ templates
+Pool allocation
+Packed states
+Intrusive data structures
+Avoiding dups on open (2)
+1-level bucket open list
+Nested bucket open list
+
+secs
+1,695
+1,513
+1,968
+1,273
+1,184
+1,051
+709
+1,049
+450
+290
+
+imp. GB
+–
+28
+1.1×
+28
+0.9×
+28
+1.3×
+23
+1.4×
+20
+1.6×
+18
+2.4×
+15
+1.6×
+14
+3.8×
+21
+5.8×
+11
+
+imp.
+–
+1.0×
+1.0×
+1.2×
+1.4×
+1.6×
+1.9×
+2.0×
+1.3×
+2.5×
+
+Table 2: A* performance on Korf’s 100 15 puzzles, exclud-
+ing instances 60, 82, and 88.
+
+Pool allocation
+Packed states
+Intrusive data structures
+Avoiding dups on open (2)
+1-level bucket open list
+Nested bucket open list
+
+secs GB nodes/sec
+656,954
+2,375
+1,896
+822,907
+1,229,574
+1,269
+798,349
+1,944
+3,293,048
+727
+516
+3,016,135
+Table 3: A* performance on Korf’s 100 15 puzzles.
+
+45
+38
+29
+28
+36
+27
+
+amount of memory that A* required to solve these instances,
+given in gigabytes. Overall, the ﬁnal implementation was
+5.8× faster than the base implementation and required 40%
+of the memory to solve all 97 instances. All variants ex-
+panded 922,237,451 nodes on this set with the exception
+of the two variants that disallowed duplicates on the open
+list which both expanded 917,203,704 nodes total and the 1-
+level bucket priority and its nested variant which expanded
+1,572,478,563 and 922,124,752 nodes respectively. Except
+for the 1-level bucket open list, all of these variants expanded
+a similar number of nodes and thus the performance im-
+provement is not from reducing the search effort, but rather
+from reducing the amount of per-node computation.
+
+Given these results,
+
+the nested bucket-based priority
+queue appears to be the most important optimization for A*
+on this domain. The bucket priority queues performed so
+much better than a binary heap that it seems unfair to handi-
+cap A* with a binary heap on domains that have unit-cost ac-
+tions. In addition, a reasonable implementation should also
+use incremental Manhattan distance, pooled node allocation,
+and packed states as they should be applicable in any imple-
+mentation, they all increase performance and decrease mem-
+ory usage. C++-style templates are recommended if they
+are available. Intrusive data structures are mildly beneﬁcial,
+however, they can be difﬁcult to reason about and increase
+the complexity of the implementation, thus we would deem
+them unnecessary in the general case.
+
+Finally, since six different settings were able to solve all
+100 instances, we have included results for these implemen-
+tations on all of the instances in Table 3. This table also in-
+cludes a nodes per second column for comparison with the
+IDA* results in Table 1. A* with the nested bucket-based
+priority was faster than IDA*, however it required about
+27 gigabytes compared to IDA*’s 12 megabytes. Addition-
+ally, A*’s expansion rate was signiﬁcantly less than that of
+IDA*; the fastest A* implementation expanded nodes ap-
+
+31proximately 9× slower than the fastest IDA* implemen-
+tation. The reason that A* was faster overall was because
+IDA* expands roughly 12× more nodes in total.
+
+Discussion
+
+As discussed above, we have veriﬁed some of our results
+using an IDA* implementation written in Objective Caml.
+OCaml is a high-level, garbage collected, programming lan-
+guage and thus we would expect that these results would
+also carry over to other languages such as Java. (Optimized
+Java code is available at the URL given earlier.) Future work
+in this area may ﬁnd it interesting to look at the impact of
+garbage collection on search performance. We speculate that
+algorithms like A*, which allocate a lot of nodes that remain
+in memory for the life of the search, perform poorly with
+garbage collectors that are tuned for allocating many short-
+lived objects (Chailloux, Manoury, and Pagano 2000).
+
+The expansion rates of our IDA* solver show that node
+expansion in the sliding tile puzzle is very cheap, especially
+when compared to other uses of heuristic search, such as
+domain-independent planning where expansion rates on the
+order of tens of thousands of nodes per second are com-
+mon (Zhou and Hansen 2011). This raises the question of
+the usefulness of the sliding tile puzzle as a popular proving
+ground for new search technology. Its expansion rate ren-
+ders useless many techniques for reducing the number of
+node expansions at the expense of even the slightest over-
+head. Techniques such as ordering successors and eliminat-
+ing cycles by keeping the current search trajectory in a hash
+table are costly enough that we didn’t even consider them
+for our experiments. In other domains with a greater cost
+for node expansion or heuristic computation, such as the
+Sokoban (Junghanns and Schaeffer 2001), these techniques
+may be crucial for achieving high performance.
+
+Given that optimizations can account for over an order
+of magnitude performance difference between implemen-
+tations of the same algorithm, it is important to consider
+whether the type of competitive testing used in most papers
+on heuristic search is the right approach. Hooker (1995) ar-
+gues against the use of such testing, claiming that it is nearly
+unscientiﬁc. Instead, Hooker says we should conduct exper-
+iments that tell why algorithms behave the way that they do,
+instead of merely determining which is faster. Ruml (2010)
+also argues against the idea of state-of-the-art performance,
+in favor of a deeper understanding of algorithms. The com-
+mon theme is to relieve scientists from the burden of tedious
+code optimization, freeing time for the actual study of algo-
+rithms. We view this paper as aligned with these ideas: by
+accumulating a variety of well-known and documented opti-
+mizations, it will be easier to produce tuned implementations
+and researchers can focus on algorithm design instead. In ad-
+dition, this will lower the barrier of entry to the the heuristic
+search community for new researchers.
+
+Although we see work on the 15-puzzle as a necessary
+ﬁrst step, the next work in this direction should explore per-
+formance on the 24-puzzle with the latest PDB heuristics.
+
+Conclusions
+
+We argue that a state-of-the-art implementation is necessary
+to ensure the accuracy of empirical results in algorithmic
+comparisons. To this end, we have presented a set of op-
+timizations for the two most popular heuristic search algo-
+rithms, IDA* and A*, on the most popular heuristic search
+benchmark, the 15-puzzle. Given our results, we have rec-
+ommended optimizations that we deem crucial for any seri-
+ous implementation. To aid other researchers in determining
+whether or not their implementation is on par with the per-
+formance that reviewers expect, we have presented a study
+showing how we expect performance to scale with different
+hardware. We hope that the results presented in this paper
+will help to increase the quality of empirical work in heuris-
+tic search by helping researchers draw the correct conclu-
+sions when comparing search algorithms.
+Acknowledgements
+
+We acknowledge support from NSF (grant IIS-0812141) and
+the DARPA CSSG program (grant HR0011-09-1-0021).
+
+References
+
+Chailloux, E.; Manoury, P.; and Pagano, B. 2000. D´eveloppement
+d’applications avec Objective CAML. O’Reily. An English trans-
+lation is available at http://caml.inria.fr/pub/docs/oreilly-book/.
+Dial, R. 1969. Shortest-path forest with topological ordering.
+CACM 12(11):632–633.
+Edelkamp, S., and Schr¨odl, S. 2012. Heuristic Search: Theory and
+Applications. Elsevier.
+Hart, P. E.; Nilsson, N. J.; and Raphael, B. 1968. A formal basis for
+the heuristic determination of minimum cost paths. IEEE Transac-
+tions on Systems Science and Cybernetics SSC-4(2):100–107.
+Hatem, M.; Burns, E.; and Ruml, W. 2011. Heuristic search for
+large problems with real costs. In Proceedings of AAAI-2011.
+Hooker, J. N. 1995. Testing heuristics: We have it all wrong. Jour-
+nal of Heuristics 1:33–42.
+Junghanns, A., and Schaeffer, J. 2001. Sokoban: Enhancing gen-
+eral single-agent search methods using domain knowledge. AIJ
+129:219–251.
+Korf, R. E. 1985. Iterative-deepening-A*: An optimal admissible
+tree search. In Proceedings IJCAI-85, 1034–1036.
+Leighton, M.; Ruml, W.; and Holte, R. 2011. Faster optimal and
+suboptimal hierarchical search. In Proceedings SoCS-11.
+McGeoch, C. C. 2012. A Guide to Experimental Algorithmics.
+Cambridge University Press.
+Rose, K.; Burns, E.; and Ruml, W. 2011. Best-ﬁrst search for
+bounded-depth trees. In Proceedings of SoCS-11.
+Ruml, W. 2010. The logic of benchmarking: A case against state-
+of-the-art performance. In Proceedings of SoCS-10.
+Russell, S., and Norvig, P. 2nd edition 2003, 3rd edition 2010.
+Artiﬁcial Intelligence: A Modern Approach.
+Slocum, J., and Sonneveld, D. 2006. The 15 puzzle book: how it
+drove the world crazy. Slocum Puzzle Foundation.
+Xu, L.; Hutter, F.; Hoos, H.; and Leyton-Brown, K. 2008. Satzilla:
+portfolio-based algorithm selection for sat. JAIR 32(1):565–606.
+Zahavi, U.; Felner, A.; Burch, N.; and Holte, R. C. 2010. Predict-
+ing the performance of IDA* using conditional distributions. JAIR
+37:41–83.
+Zhou, R., and Hansen, E. 2011. Dynamic state-space partitioning
+in external-memory graph search. In Proceedings of ICAPS-11.
+
+32

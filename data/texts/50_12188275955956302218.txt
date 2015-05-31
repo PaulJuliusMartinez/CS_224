@@ -1,0 +1,1469 @@
+Condensed Representations for Inductive Logic Programming
+
+Luc De Raedt
+Institut f¨r Informatik
+
+Albert-Ludwigs-University Freiburg
+
+Georges Koehler Allee 79
+D-79110 Freiburg, Germany
+
+deraedt@informatik.uni-freiburg.de
+
+Jan Ramon
+
+Department of Computer Science
+Katholieke Universiteit Leuven
+
+Celestijnenlaan 200A
+
+B-3001 Heverlee, Belgium
+
+Jan.Ramon@cs.kuleuven.ac.be
+
+Abstract
+
+When mining frequent Datalog queries, many queries will
+cover the same examples; i.e., they will be equivalent and
+hence, redundant. The equivalences can be due to the
+data set or to the regularities speciﬁed in the background
+theory. To avoid the generation of redundant clauses, we
+introduce various types of condensed representations. More
+speciﬁcally, we introduce δ-free and closed clauses, that are
+deﬁned w.r.t. the data set, and semantically free and closed
+clauses, that take into account a logical background theory.
+A novel algorithm that employs these representations is
+also presented and experimentally evaluated on a number of
+benchmark problems in inductive logic programming.
+
+inductive
+
+Keywords:
+relational
+learning, relational data mining, condensed representations,
+frequent query mining, knowledge representation.
+
+logic programming,
+
+Introduction
+
+One of the central tasks in data mining is that of ﬁnding all
+patterns that are frequent in a given database. The induc-
+tive logic programming instantiation of this task considers
+patterns that are logical queries or clauses and data in the
+form of a Datalog (or Prolog) knowledge base (Dehaspe &
+De Raedt, 1997; Dehaspe & Toivonen, 1999). This problem
+is known under the name of frequent Datalog query mining
+and has received quite some attention in the literature, cf.
+(Nijssen & Kok, 2001, 2003; Malerba & Lisi, 2001; Weber,
+1997). Despite its popularity, there are several problems that
+arise when applying these techniques. First, it is computa-
+tionally expensive to compute all frequent queries. This is
+due to the use of a very expressive formalism in which test-
+ing the generality of clauses (w.r.t. θ-subsumption) as well
+as the computation of the frequency of a clause are compu-
+tationally hard. Second, a vast number of queries is being
+generated, tested and discovered. In contrast to simple pat-
+tern languages, such as item-sets, the clausal pattern space is
+inﬁnitely large. Third, even though background knowledge
+is used when evaluating the frequency of clauses, no back-
+ground knowledge is employed when generating the can-
+didate clauses. So far, the standard way of guiding induc-
+tive logic programming systems computing frequent Data-
+Copyright c(cid:13) 2004, American Association for Artiﬁcial Intelli-
+gence (www.aaai.org). All rights reserved.
+
+438    KR 2004
+
+log queries is through the speciﬁcation of syntactic restric-
+tions that the clauses should satisfy (the so-called language
+bias). Syntactic restrictions (and language bias) are not re-
+ally declarative, they are hard to to specify and hence, they
+hinder the application of inductive logic programming. Fur-
+thermore, when analyzing the discovered clauses, it turns
+out that many of the patterns discovered will be equivalent,
+and hence, redundant. These redundancies do not only lead
+to unnecessary inefﬁciencies but also impose an unneces-
+sary burden on the user. The redundancies can be due to the
+data set or to the background knowledge. As an illustration
+from the domain of beer consumption, consider the hypothe-
+ses hoegaarden ∧ duvel and duvel. For a particular data set,
+these two hypotheses may cover exactly the same examples
+because in the available data set everybody that drinks du-
+vel also drinks hoegaarden. On the other hand, it might also
+be that our background theory speciﬁes that hoegaarden and
+duvel are both beer. In the light of this background theory,
+the patterns hoegaarden ∧ beer and hoegaarden would be
+semantically equivalent, regardless of the data set.
+
+In this paper, we address these problems by introduc-
+ing various types of condensed representations for frequent
+Datalog query mining. Condensed representations are well
+studied for simple pattern domains such as item sets (Zaki,
+2000; Boulicaut, Bykowski, & Rigotti, 2003; Pasquier et al.,
+1999) and have recently also been applied in the context of
+graph mining (Yan & Han, 2002). The key idea underly-
+ing condensed representations (such as closed and free sets)
+is that one aims at ﬁnding a representative for each equiv-
+alence class of frequent patterns (the so-called closed set)
+instead of ﬁnding all frequent patterns. In this context, we
+ﬁrst introduce the novel concept of semantic freeness and
+closedness, where the term semantic refers to the use of a
+declarative background knowledge about the domain of in-
+terest that is speciﬁed by the user. Under this notion, two
+clauses c1 and c2 are semantically equivalent if and only if
+KB |= c1 ↔ c2, e.g. hoegaarden ∧ beer and hoegaar-
+den are semantically equivalent in the light of beer ← hoe-
+gaarden. Employing such a background knowledge and se-
+mantics is an elegant alternative to specifying complex and
+often ad hoc language bias constraints (such as those for
+dealing with symmetric or transitive predicates).
+In addi-
+tion, it provides the user with a powerful and declarative tool
+for guiding the mining process. Secondly, we upgrade the
+
+already existing notions of freeness and closedness (Zaki,
+2000) for use in an inductive logic programming setting, and
+show how these traditional notions are related to the new
+notions of semantic condensed representations. If the two
+only predicates in the database are hoegaarden and duvel,
+and the examples covered by hoegaarden ∧ duvel and du-
+vel are the same, then duvel is free (i.e., a shortest clause
+in the equivalence class) and hoegaarden ∧ duvel is closed
+(i.e., the longest clause in the equivalence class). As a third
+contribution, a novel frequent Datalog clause engine, called
+c-armr, that works with condensed representations, is pre-
+sented and experimentally validated.
+
+Problem Setting
+
+Even though we assume some familiarity with Datalog and
+Prolog, the reader can ﬁnd a brief overview of the most im-
+portant concepts from logic programming in the Appendix.
+The task of frequent query mining was ﬁrst formulated in
+
+(Dehaspe & De Raedt, 1997; Dehaspe & Toivonen, 1999):
+• Given
+
+– a language of clauses L
+– a database D
+– a predicate key/1 belonging to D
+– a frequency threshold t
+
+• Find all clauses c ∈ L such that f req(c,D) ≥ t.
+The database D is a Prolog knowledge base; it contains
+the data to be mined.
+In this paper, we will assume that
+all queries posed to the knowledge base terminate and also
+that all clauses are range-restricted (i.e. all variables in the
+conclusion part of the clause also occur in the condition
+part). The ﬁrst requirement can be guaranteed by employ-
+ing Datalog (i.e., functor free Prolog). The database D is
+assumed to contain a special predicate key/1 which deter-
+mines the entities of interest and what is being counted.
+The language of clauses L deﬁnes the set of well-formed
+clauses. All clauses in L are assumed to be of the form
+p(K) ← key(K), q1, ..., qn where the qi are different lit-
+erals. Within inductive logic programming, L typically im-
+poses syntactic restrictions on the clauses to be used as pat-
+terns, most notably, type and mode restrictions. The types
+indicate which arguments of the predicates belong to the
+same types. The modes provide information about the in-
+put/output behavior of the predicates. E.g., the predicate
+member(X, Y ), which succeeds when X is an element of
+the list Y , runs safely when the second argument is instanti-
+ated upon call time. Therefore the typical mode restrictions
+states that the second argument is an input (’+’) argument.
+The ﬁrst can be an input or an output (’-’) argument.
+D is deﬁned as
+
+The frequency of a clause c with head key(K) in database
+
+f req(c,D) =| {θ | D ∪ c |= p(K)θ} |
+
+(1)
+So, the frequency of a clause is the number of instances
+of p(K) that are logically entailed by the database and the
+clause. The frequency can be computed by asserting the
+clause c in the database already containing D and then run-
+ning the query ?− p(K). The frequency then corresponds to
+the number of different answer substitutions for this query.
+
+Example 1 Consider the database consisting of the follow-
+ing facts:
+
+drinks(jan,duvel).
+drinks(hendrik,cognac).
+drinks(luc,hoegaarden).
+
+key(jan).
+key(hendrik).
+key(luc).
+
+beer(duvel).
+beer(hoegaarden).
+
+brandy(cognac).
+
+frequency
+
+Consider also the following clauses:
+alcohol(X) ← beer(X).
+alcohol(X) ← brandy(X).
+false ← brandy(X), beer(X).
+clause
+The
+the
+key(X), drinks(X, B), beer(B)
+is 2 as
+answer substitutions: X = jan and X = luc.
+
+←
+two
+Observe that the constraint f req(c,D) ≥ t is anti-
+monotonic. A constraint c on patterns is anti-monotonic if
+and only if c(p) and q (cid:22) p implies c(q), where, q (cid:22) p de-
+notes that q subsumes (i.e. generalizes) p.
+
+it has
+
+p(X)
+
+of
+
+An important problem with the traditional setting for fre-
+quent pattern mining in inductive logic programming is that
+– due to the expressiveness of clausal logic – the number of
+patterns that is considered and generated is extremely large
+(without syntactic restrictions, it is even inﬁnitely large).
+This does not only cause problems when interpreting the
+results but also leads to computational problems. The key
+contribution of this paper is that we address this problem
+by introducing condensed representations for inductive logic
+programming.
+
+Knowledge for Condensed Representations
+
+It is often argued that one of the advantages of inductive
+logic programming is the ease with which one can employ
+background knowledge in the mining process. Background
+knowledge typically takes the form of dividing the database
+D = KB∪ D into two components: the background knowl-
+edge KB and the data D, where KB constitutes the inten-
+sional and D the extensional part of the database. The idea
+is then that both intensional and extensional predicates are
+used in the hypotheses and that their nature is transparent to
+the user. With only a few exceptions, most inductive logic
+programming systems do not employ the background the-
+ory during hypothesis generation1 but only while computing
+the coverage or frequency of candidate clauses. Indeed, the
+typical inductive logic programming system structures the
+search space using θ-subsumption (Plotkin, 1970) or OI-
+subsumption (Malerba & Lisi, 2001), and starts searching
+at the empty clause and repeatedly applies a reﬁnement op-
+erator. Because typical reﬁnement operators do not employ
+background knowledge, they generate many clauses that are
+
+1Perhaps,
+
+the only exception is Progol (Muggleton, 1995),
+which employs the background knowledge to generate a most spe-
+ciﬁc clause in L that covers a speciﬁed example, and older heuristic
+systems that employ the background knowledge during reﬁnement
+using a resolution based operator, cf.
+(Bergadano, Giordana, &
+Saitta, 1990).
+
+KR 2004    439
+
+semantically equivalent. As the inductive logic program-
+ming system is unaware of this, unnecessary work is being
+performed and the search space is blown up resulting in se-
+vere inefﬁciencies.
+
+Example 2 Reconsider Example 1. A typical reﬁnement op-
+erator will generate p(K) ← key(K), beer(K), alcohol(K);
+p(K) ← key(K), beer(K); and p(K) ← key(K), alcohol(K).
+However, given the clause stating that beer is alcohol, the
+ﬁrst two clauses are equivalent.
+
+To alleviate this problem, we introduce, as the ﬁrst contri-
+bution of this paper, the notions of semantically closed and
+semantically free clauses. These novel concepts assume that
+a background theory KB is given in the form of a set of
+Horn-clauses. At this point, we wish to stress that the back-
+ground theory used should not contain information about
+speciﬁc examples and also that the theory used here might
+well be different than the one implicitly used in D. So, KB
+here denotes a set of properties about the domain of inter-
+est. Continuing our example, KB consists of the two proper
+clauses deﬁning alcohol.
+Deﬁnition 1 A clause h ← k, q1, ..., qn is semantically free,
+or s-free, w.r.t. the background knowledge KB, if and only
+if there is no clause p0 ← k, p1, ..., pm (m < n) where
+each pi corresponds to a single qj, for which KB |= p0 ←
+p1, ..., pm
+Deﬁnition 2 A clause h ← k, q1, ..., qn is semantically
+closed, or s-closed, w.r.t.
+the background knowledge KB
+if and only if {kθ, q1θ, q2θ, ..., qnθ} is the least Herbrand
+model of KB ∪ {kθ, q1θ, ..., qnθ} where θ is a skolem sub-
+stitution for h ← k, q1, ..., qn.3
+Deﬁnition 3 A clause h ← k, q1, ..., qn is consistent if and
+only if KB ∪ {kθ, q1θ, ..., qnθ} 6|= (cid:3) where θ is a skolem
+substitution.
+
+2.
+
+Intuitively, a clause is s-free if it is not possible to delete
+literals without affecting the semantics; it is s-closed if it
+is not possible to add literals without affecting the seman-
+tics. In Example 2, p(K) ← key(K), beer(K), alcohol(K) is s-
+closed, the other clauses are s-free, all clauses are consistent
+and the clause p(K) ← key(K), beer(K), brandy(K). is incon-
+sistent because of the clause false ← beer(X), brandy(X). It
+acts as a constraint on the set of legal clauses.
+
+The reader familiar with the theory of inductive logic pro-
+gramming might observe that s-closed clauses are closely re-
+lated to Progol’s bottom clauses (Muggleton, 1995) as well
+as to Buntine’s notion of generalized subsumption (Buntine,
+1988). Indeed, the bottom clause of an s-closed clause w.r.t.
+the background theory is the s-closed clause itself, and the
+two clauses p(K) ← key(K), beer(K), alcohol(K) and p(K)
+← key(K), beer(K) in Example 2, are equivalent under gen-
+eralized subsumption. Observe also that each s-free clause
+
+2A more general but less operational deﬁnition requires that
+there is no clause p0 ← k, p1, ..., pm such that p0, ..., pm sub-
+sumes q1, ..., qn.
+
+3Here it is assumed that the least Herbrand model is ﬁnite,
+which can be enforced when using Datalog and range-restriction.
+
+440    KR 2004
+
+has a unique s-closed clause, the s-closure, that is equiva-
+lent. Furthermore, several s-free clauses may have the same
+s-closure.
+
+From the above considerations, it follows that it would be
+beneﬁcial if the search could be restricted to generate only s-
+closed clauses. Then one would generate only one clause for
+each equivalence class of clauses and the s-closures would
+act as the canonical forms. This would closely correspond
+to having a reﬁnement operator working under Buntine’s
+generalized subsumption framework. Unfortunately, it is
+not easy to enforce the s-closed constraint as it is not anti-
+monotonic. Indeed, in our running example, p(K) ← key(K),
+beer(K), alcohol(K) is s-closed, but its generalization p(K)
+← key(K), beer(K) is not. Fortunately, it turns out that s-
+freeness is anti-monotonic. Therefore it can easily be inte-
+grated in traditional frequent query mining algorithms. This
+integration will be discussed below.
+
+Once the s-free clauses have been found, their s-closures
+can be computed and ﬁltered to eliminate doubles. The s-
+closure of a clause h ← k, q1, ..., qm w.r.t. the background
+theory can be computed as indicated in Algorithm 1.
+Algorithm 1 Computing the s-closure of h ← k, q1, ..., qm
+w.r.t. KB.
+
+Compute a skolemization substitution θ for
+Compute the least Herbrand model {r1, ..., rn}
+Deskolemize hθ ← kθ, r1, ..., rn and return the result
+
+h ← k, q1, ..., qm
+of KB ∪ {kθ, q1θ, ..., qmθ}
+
+Example 3 To compute the s-closure of p(K) ← key(K),
+brandy(K), we ﬁrst skolemize the clause using substitution
+θ = {K← sk} where sk is the skolem constant. We then
+compute the least Herbrand model of the theory containing
+the facts key(sk), brandy(sk) and the clauses deﬁning alco-
+hol, yielding key(sk), brandy(sk), alcohol(sk). Deskolemiz-
+ing then yields p(K) ← key(K), brandy(K), alcohol(K).
+
+Observe that the constraint of s-closedness provides the
+user with a powerful means to inﬂuence the results of the
+mining process. Indeed, adding or removing clauses from
+the background theory will strongly inﬂuence the number
+as well as the nature of the discovered patterns. Basically,
+adding a clause of the form h ← p, q has the effect of ignor-
+ing h in clauses where p and q are already present. There-
+fore, the user may also desire to declare clauses in the back-
+ground theory that do not possess a 100 per cent conﬁdence.
+This in turn will increase the number of clauses that are se-
+mantically equivalent, and hence reduce the number of s-
+closed clauses. So, less clauses will be generated.
+
+When working with a reﬁnement operator that simply
+adds literals to hypotheses, one can also easily enforce
+the consistency constraint. Indeed, under these conditions,
+whenever a clause p ← k, q1, ..., qm is consistent, all
+clauses of the form p ← k, p1, ..., pn with {p1, ..., pn} ⊆
+{q1, ..., qm} will also be consistent. Therefore, the consis-
+tency constraint is anti-monotonic and can be incorporated
+in the same way as the s-freeness constraint.
+
+Discovering Associations
+
+Specifying all clauses that hold in the domain may be cum-
+bersome and the question arises as to whether the data min-
+ing system may not be able to discover the clausal regu-
+larities that hold among the data. For item sets, sequen-
+tial patterns and even graphs (Yan & Han, 2002; Boulicaut,
+Bykowski, & Rigotti, 2003; Zaki, 2000), techniques have
+been developed that discover high conﬁdence association
+rules during the mining process and once discovered, em-
+ploy them to prune the search. To this aim, we upgrade the
+notions of δ-free and closed item sets (Boulicaut, Bykowski,
+& Rigotti, 2003) to clausal logic:
+Deﬁnition 4 A clause h ← k, q1, ..., qn is δ-free (with δ be-
+ing a small positive integer), if and only if there exists no
+clause c of the form h ← k, p1, ..., pm, not p0, where each
+pi corresponds to a single qj, for which f req(c,D) ≤ δ.
+To understand this concept, ﬁrst consider the clauses h ←
+k, p1, ..., pm, not p0 and the case that δ = 0.
+If such a
+clause has frequency 0, this implies that the association rule
+p0 ← k, p1, ..., pm has a conﬁdence of 100 per cent. The
+negative literal not p0 is used because we need to know that
+the rule holds for all substitutions. Now, the deﬁnition of 0-
+freeness is analogous to that of s-freeness except that these
+association rules are not speciﬁed in the background theory
+but instead are regularities that hold in the data. Indeed,
+Theorem 1 For δ = 0, if KB would contain all 100 per
+cent conﬁdence association rules then a clause is δ-free if
+and only if it is s-free w.r.t. KB.
+
+Now consider the case that δ 6= 0. Then rather than re-
+quiring association rules to be perfect, a (small) number of
+exceptions are allowed in each association rule.
+Example 4 The clause p(K) ← key(K), drinks(K,B),
+beer(B) is s-free and therefore 0-free. It is however not 1-
+free because p(K) ← key(K), drinks(K,B), not beer(B) has
+a frequency of 1. Similarly, p(K) ← key(K), drinks(K,B),
+brandy(B) is 0-free and 1-free but not 2-free.
+Observe that as δ increases, the number of δ-free clauses will
+decrease.
+
+For δ = 0, we can deﬁne a corresponding notion of
+closedness.
+Deﬁnition 5 A clause h ← k, q1, ..., qn is closed if
+and only if there exists no clause c of the form h ←
+k, p1, ..., pm, not p,where each pi (but not p) corresponds
+to a single qj, for which f req(c,D) = 0.
+Theorem 2 If KB contains all 100 per cent conﬁdence as-
+sociation rules then a clause is closed if and only if it is
+s-closed w.r.t. KB.
+We have not deﬁned a corresponding notion of δ-closedness
+because traditional deduction rules do not hold any more.
+Indeed, from the fact that the association rules p ← q and
+q ← r have at most δ exceptions, one may not conclude that
+p ← r has only δ exceptions.
+
+it
+
+Again,
+
+is easy to see that δ-freeness is an anti-
+monotonic property, which will be useful when developing
+algorithms.
+
+One of the interesting properties of δ-free clauses is that
+they can be used to closely approximate the frequencies of
+any frequent clause, cf. (Boulicaut, Bykowski, & Rigotti,
+2003). The following theorem follows from a corresponding
+result for item sets due to (Boulicaut, Bykowski, & Rigotti,
+2003).
+Theorem 3 Let D be a database. Let S be a set of δ-
+free clauses (w.r.t. D). Let c1 : p(K) ← x1 . . . xm and
+c2 : p(K) ← x1 . . . xn be clauses with n > m such that
+∀i ∈ {m . . . n − 1} : ∃(h ← b) ∈ S,∃θ : hθ = xi+1 ∧
+bθ ⊂ {x1, . . . , xi}. Then, f req(c1,D) ≥ f req(c2,D) ≥
+f req(c1,D) − δ.n.
+
+An Algorithm for Mining Frequent Clauses
+
+Algorithms for ﬁnding frequent Datalog queries are similar
+in spirit to those traditionally employed in frequent item set
+mining. A high-level algorithm for mining frequent clauses
+along these lines is shown in Algorithm 2.
+It searches
+the subsumption lattice breadth-ﬁrst: it repeatedly generates
+candidate clauses Ci that are potentially frequent and tests
+for their frequency. To generate candidates, a reﬁnement op-
+erator ρ is applied. To employ a minimum frequency thresh-
+old in Algorithm 2 one must set con = (f req(f,D) ≥ t).
+Using the abstract constraint con, it is also possible to em-
+ploy other types of anti-monotonic constraints in Algorithm
+2. Despite the similarity with traditional frequent pattern
+mining algorithms, there are also some important differ-
+ences.
+First, traditional frequent pattern mining approaches as-
+sume that the language L is anti-monotonic. For clausal
+logic, a language is anti-monotonic when for all clauses
+h ← k, p1, ..., pm ∈ L, all generalizations of the form h ←
+k, p1, ..., pi−1, pi+1, ..., pm ∈ L. Even though this assump-
+tion holds for expressive pattern languages such as those in-
+volving trees or graphs, cf. (Inokuchi, Washio, & Motoda,
+2003), it is typically invalid in the case of inductive logic
+programming because of the mode and type restrictions.
+Indeed, consider for instance the clause p(K) ← key(K),
+benzene(K,S), member(A,S), atom(K,A,c). Even though this
+clause will typically satisfy the syntactic constraints, its gen-
+eralization p(K) ← key(K), member(A,S) will typically not
+be mode-conform. Because the language L employed in in-
+ductive logic programming is not anti-monotonic, one need
+not only keep track of the frequent clauses, but also of the
+(maximally general) infrequent ones. Furthermore, when a
+new candidate is generated, it is tested whether the candidate
+is not subsumed by an already known infrequent one. Our
+c-armr implementation uses an indexing scheme to avoid
+subsumption tests wherever possible. This scheme relies on
+the observation that a clause c1 can only θ-subsumes clause
+c2 when all constant, predicate, and function symbols occur-
+ring in c1 also occur in c2.
+
+Second, in order to search efﬁciently for solutions, it is
+important that each relevant pattern is generated at most
+once. Early implementations (Dehaspe & Toivonen, 1999)
+of frequent pattern mining systems in inductive logic pro-
+gramming were inefﬁcient because they generated several
+syntactic variants of the same clause (clauses that are equiv-
+
+KR 2004    441
+
+alent under θ-subsumption) and had to ﬁlter these away us-
+ing computationally expensive subsumption tests. One ap-
+proach that avoids this problems deﬁnes a canonical form for
+clauses and employs a so-called optimal reﬁnement operator
+that only generates clauses in canonical form, cf. (Nijssen
+& Kok, 2001, 2003). More formally, the canonical form we
+employ is deﬁned as follows:
+Deﬁnition 6 A clause h ← k, p1, ..., pm with variables
+V1, ..., Vn (ordered according to their ﬁrst occurrence from
+left to right) is in canonical form if and only if (h ←
+k, p1, ..., pm)θ where θ = {V1 ← 1, ..., Vn ← n} is the
+smallest clause according to the standard lexicographic or-
+der on clauses that can be obtained when changing the order
+of the literals pi in the clause.
+If one furthermore requires that all variables in a pattern are
+instantiated to a different term (as in OI-identity (Malerba
+& Lisi, 2001)) when determining whether a clause covers an
+example it is possible to deﬁne an optimal reﬁnement op-
+erator. A reﬁnement operator ρ is optimal for a language
+L if and only if for all clauses c ∈ L there is exactly one
+sequence of clauses c0, ..., cn such that c0 = > (the most
+general element in the search space) and cn = c for which
+ci ∈ ρ(ci+1). So, when employing optimal reﬁnement oper-
+ators, there is exactly one path from > to each clause in the
+search space (De Raedt & Dehaspe, 1997). This approach is
+related to those employed when searching for frequent sub-
+graphs, cf. (Yan & Han, 2002; Inokuchi, Washio, & Motoda,
+2003), and is largely adapted in our implementation. More
+speciﬁcally, c-armr’s reﬁnement operator works as follows4:
+• a total order on the predicates is imposed
+• only clauses h ← b1, ..., bn in canonical form are reﬁned
+• all reﬁnements are obtained by adding a literal b to the end
+• the predicate in b must be larger than or equal to the pred-
+• if the predicates in b and bn are different, the reﬁnement
+• if the predicate p in b and bn is identical, it is tested
+whether re-ordering the literals containing p results in a
+smaller clause w.r.t. the lexicographic order.
+Third, computing the frequency of a clause is computa-
+tionally expensive as one evaluates a query against the whole
+database. Several optimizations have been proposed in this
+context, cf. (Blockeel et al., 2002). In our implementation,
+we employ the smartcall introduced in (Santos Costa et al.,
+2002) in combination with a heuristic for speeding up the
+computation of a coverage test (i.e. a test whether a clause
+covers a speciﬁc example). The heuristic orders the literals
+in a clause according to the number of answers it has. A
+more detailed description of the effect of such an optimisa-
+tion is given in Struyf & Blockeel (2003). We also store the
+identiﬁers of the covered example with each frequent clause,
+a kind of vertical representation, which allows us to reduce
+
+will be in canonical form
+
+of the clause
+
+icate in bn
+
+4Some further complications arise when mode-declarations are
+
+employed.
+
+442    KR 2004
+
+the number of coverage tests needed as well as further opti-
+mizations.
+
+One further feature of our implementation is worth men-
+tioning. It was a design goal to produce a light Prolog im-
+plementation that would be small but still reasonably efﬁ-
+cient.
+In this regard, because many Prolog systems lack
+intelligent garbage collection and have indexing problems
+for huge amounts of data, it turned out crucial that the main
+memory required by Prolog is kept as small as possible. This
+was realized by writing the sets Fi to ﬁles at level i, and then
+reading the frequent clauses c again at level i + 1 in order to
+compute the reﬁnements ρ(c) potentially belonging to Ci+1.
+Similarly, the Ii are written to a ﬁle and indexed after each
+level. The code will be released in the public domain.
+
+Algorithm 2 Computing all clauses that satisfy an anti-
+monotonic constraint con.
+C0 := {h(K) ← key(K)}
+i := 0;F0 := ∅;I0 := ∅
+while Ci 6= ∅ do
+Fi := {h ∈ Ci | con(h) = true}
+Ii := Ci − Fi
+Ci+1 := {h | h ∈ ρ(h0), h0 ∈ Ci}
+i := i + 1
+
+Ci := {h | h ∈ Ci and ¬∃s ∈S
+
+j Ij : s (cid:22) h}
+
+end while
+
+Adaptations for Mining Free Clauses
+
+Let us now discuss how to adapt the previously introduced
+algorithm for mining free sets.
+
+First, concerning the s-free clauses, we have made the fol-
+lowing enhancements:
+• use the constraint (f req(c,D) ≥ t)∧ s-free(c, KB) in-
+stead of only the minimum frequency threshold; this con-
+straint is also anti-monotonic, hence the algorithm can di-
+rectly be applied;
+• those candidates that do not satisfy the s-freeness con-
+• ﬁnally, before testing whether a candidate clause c is sub-
+sumed by an already known infrequent clause, replace c
+by its s-closure under KB; this will allow further pruning
+to take place.
+
+straint are simply added to the appropriate Ii
+
+Observe that the consistency constraint can be enforced in
+the same way.
+
+Second, for what concerns the δ-free clauses, we employ
+the ﬁrst two enhancements. Observe that it is possible as
+well as desirable to employ the constraint (f req(c,D) ≥
+t) ∧ δ − f ree(c,D) ∧ s − f ree(c, KB). Then one does not
+only use the already available knowledge in the background
+but also tries to discover new knowledge. One interesting
+alternative for adding the non-δ-free candidates to the Ii is
+to simply add them to the background theory. Doing so re-
+sults in propagating the effects of the discovered association
+rules by combining their conclusions with those already in
+the background theory. When δ=0, this will always yield
+correct results. However, when δ 6= 0, this might lead – in
+
+molecule(225).
+logmutag(225,0.64).
+lumo(225,-1.785).
+logp(225,1.01).
+nitro(225,[f1_4,f1_8,f1_10,f1_9]).
+atom(225,f1_1,c,21,0.187).
+atom(225,f1_2,c,21,-0.143).
+atom(225,f1_3,c,21,-0.143).
+atom(225,f1_4,c,21,-0.013).
+atom(225,f1_5,o,52,-0.043).
+...
+ring_size_5(225,[f1_5,f1_1,f1_2,f1_3,f1_4]).
+hetero_aromatic_5_ring(225,[f1_5,f1_1,f1_2,f1_3,f1_4]).
+...
+
+bond(225,f1_1,f1_2,7).
+bond(225,f1_2,f1_3,7).
+bond(225,f1_3,f1_4,7).
+bond(225,f1_4,f1_5,7).
+bond(225,f1_5,f1_1,7).
+bond(225,f1_8,f1_9,2).
+bond(225,f1_8,f1_10,2).
+bond(225,f1_1,f1_11,1).
+bond(225,f1_11,f1_12,2).
+bond(225,f1_11,f1_13,1).
+
+Figure 1: An example from the mutagenesis benchmark
+
+some cases – to some unsound conclusions (because deduc-
+tion using δ-free is not sound as discussed above).
+
+Experiments
+
+In this section we present an empirical evaluation of our
+claims. In particular, we will compare the time needed to
+ﬁnd all frequent patterns and the number of clauses produced
+using the different settings discussed in this paper.
+
+A ﬁrst set of experiments will use the mutagenesis dataset,
+a popular benchmark in inductive logic programming (Srini-
+vasan et al., 1996). This database contains the descrip-
+tions of 230 molecules, including their structure (atoms and
+bonds), information on functional groups and some global
+chemical properties. Figure 1 contains part of the relational
+description of one molecule.
+
+In a ﬁrst experiment we investigate the effect of introduc-
+ing a simple background theory and requiring the clauses to
+be s-free. Table 1 summarizes the results of this experiment.
+Two settings are considered. In the ﬁrst setting, the standard
+frequent pattern discovery algorithm is used without a back-
+ground theory. In the second one, the s-freeness constraint
+is enforced. Timings are given in seconds. The total running
+time up to each level as well as the total time used for testing
+which examples are covered by the clauses are displayed. As
+expected, enforcing s-freeness eliminates a substantial num-
+ber of redundant clauses and also signiﬁcantly reduces the
+computation time.
+
+In a second experiment, we investigate δ-freeness. Table
+2 speciﬁes the number of discovered clauses and the cpu-
+time, when patterns are required to be δ-free with δ = 0.
+Here, also the total time for discovering all δ-free rules up to
+each level are displayed. We again consider the cases with
+and without a background theory. As the background theory
+only contains rules that are 100 per cent correct, these rules
+are found as 0-free rules in the setting without a background
+theory and hence the number of patterns is equal in both
+settings. Still, the setting without background theory needs
+more time to ﬁnd these rules.
+
+The generated association rules include both simple ones
+
+such as
+atom(Mol,Atm, , 92, ) ← atom(Mol,Atm,f, , )
+
+(all ﬂuor atoms are of
+ones such as
+sbond(Mol,Atm3,Atm2,1)←
+
+type 92) and more complex
+
+atom(Mol,Atm3,c, , ), atom(Mol,Atm2,o,49, ),
+atom(Mol,Atm1,o, , ), sbond(Mol,Atm3,Atm1,1)
+
+The latter clause is not valid in general even though it
+holds for this speciﬁc database.
+
+The number of clauses discovered in this setting is smaller
+than that in the previous case, where only a simple back-
+ground theory was provided. On the other hand, discovering
+the δ-free rules requires a lot of time. Fortunately, associ-
+ation rules need to be discovered only once. The cost for
+coverage testing is signiﬁcantly smaller as compared to the
+setting without δ-freeness. As this cost is proportional to the
+number of examples, one can expect more signiﬁcant gains
+when larger databases are employed.
+
+In a third experiment we consider the effect of setting δ >
+0. This causes a further reduction of the number of patterns
+found and the computation time needed. E.g.for δ = 40,
+7898 clauses are found in 6911 seconds. Table 3 compares
+the number of clauses generated by the standard algorithm
+to the number of δ-free clauses and the number of closed
+clauses. One can see that, while more costly to compute, the
+number of closed clauses is much smaller than the number
+of free clauses. Note that when one would close all δ-free
+clauses with δ > 0, one would obtain a still smaller set. E.g.
+for δ = 20, the number of closed clauses is less than 50% of
+the number for δ = 0.
+
+Tables 4, 5 and 6 report on similar experiments but now
+for the carcinogenesis dataset (Srinivasan, King, & Bristol,
+1999). This dataset also contains descriptions of molecules,
+but it contains more variation and more complex molecules.
+In Table 4, one can see that here too, using s-free clauses
+reduces the number of frequent patterns and the running
+time.
+In Table 5, we then consider the inﬂuence of δ-
+freeness. Again, we see that the number of patterns found is
+further reduced. For this dataset, the background theory also
+contains some properties that cannot be discovered as δ-free
+rules. Therefore, using s-freeness combined with δ-freeness
+
+KR 2004    443
+
+level
+
+0
+1
+2
+3
+4
+5
+6
+7
+
+#
+1
+6
+45
+225
+1147
+5458
+24611
+83322
+
+No theory
+
+run
+0.3
+0.4
+1.9
+9.6
+59.7
+404.1
+2820.2
+20880.0
+
+cover
+0.0
+0.0
+0.9
+3.8
+21.8
+157.3
+1298.9
+11372.3
+
+S-free clauses
+#
+1
+6
+45
+206
+921
+3674
+14144
+50366
+
+run
+0.3
+0.4
+0.8
+5.0
+31.8
+218.1
+1429.1
+9401.0
+
+cover
+0.0
+0.0
+0.0
+2.2
+13.4
+89.5
+627.8
+4582.2
+
+Table 1: Number of patterns generated, total runtime and time needed for the coverage test on the Mutagenesis benchmark
+using the standard algorithm and the algorithms ﬁnding s-free clauses.
+
+level
+
+0
+1
+2
+3
+4
+5
+6
+7
+
+#
+1
+6
+43
+193
+811
+3057
+10976
+36610
+
+No theory
+run
+0.4
+0.4
+2.7
+12.2
+73.6
+515.3
+3228.2
+26062.7
+
+cover
+0.0
+0.0
+0.6
+2.7
+13.5
+86.3
+592.9
+4191.9
+
+delta
+0.0
+0.0
+1.0
+3.5
+21.4
+191.5
+1324.3
+14840.6
+
+run
+0.3
+0.4
+0.9
+7.7
+51.3
+383.6
+2498.6
+21563.1
+
+S-free clauses
+
+cover
+0.0
+0.0
+0.2
+2.1
+12.1
+80.1
+546.7
+3853.0
+
+delta
+0.0
+0.0
+0.2
+2.7
+19.7
+177.3
+1220.3
+13577.5
+
+Table 2: Number of patterns generated, total runtime, time needed for the coverage test and time needed for the discovery of
+the δ-free rules on the Mutagenesis benchmark using the standard algorithm and the algorithms ﬁnding s-free patterns.
+
+further reduces the number of frequent patterns as compared
+to using only δ-freeness. Table 6 then indicates the effect
+of closing the patterns. For this dataset, the number of pat-
+terns is reduced by more than 50% after 5 levels of mining
+while still yielding a very close approximation (δ = 1). Of
+course, here too, increasing δ will further reduce the number
+of discovered patterns.
+
+Conclusions and Related Work
+
+We have introduced various types of condensed represen-
+tations for use in inductive logic programming and we
+have demonstrated that this reduces the number of patterns
+searched for, the number of solutions as well as the time
+needed for the discovery task. Although condensed repre-
+sentations have been used in the context of simpler pattern
+languages (such as item sets, sequences and graphs), it is
+the ﬁrst time that they have been employed within an induc-
+tive logic programming setting. A related and independently
+developed approach (Stumme, 2004), that was still under re-
+view, was brought to our attention after our paper had been
+accepted. It is related in that it investigates the theoretical
+properties of free and closed Datalog queries using formal
+concept analysis. However, it neither deals with semantic
+closures nor reports on an implementation or experiments.
+On the other hand, it contains exciting ideas about the use
+of formal concept analysis for visualization of the mining
+results.
+
+The notions δ-free and closed clauses are a direct up-
+grade of the corresponding notions for item sets. However,
+the semantic notions are novel and could easily be applied
+
+444    KR 2004
+
+to the simpler pattern domains as well. The semantic no-
+tions are somewhat related to the goal of deriving a non-
+redundant theory in the clausal discovery engines by (Helft,
+1989; De Raedt & Dehaspe, 1997). In these engines, one
+was computing a set H of 100 per cent conﬁdence associa-
+tion rules in the form of clauses such that no clause in H was
+logically redundant (i.e. entailed by the other clauses). Em-
+ploying our semantic notions has a similar effect as working
+with Buntine’s (1988) generalized subsumption notion.
+
+At this point, we wish to stress that working with seman-
+tically free and/or closed clauses is not only useful when
+mining for frequent patterns, but can also be beneﬁcial when
+mining for other types of patterns, such as for classiﬁcation
+rules. This could – in an inductive logic programming set-
+ting – easily be implemented by employing a semantic re-
+ﬁnement operator.
+
+Appendix: Logic Programming Concepts
+
+A ﬁrst order alphabet is a set of predicate symbols, con-
+stant symbols and functor symbols. A deﬁnite clause is a
+formula of the form A ← B1, ..., Bn where A and Bi are
+logical atoms. An atom p(t1, ..., tn) is a predicate symbol
+p/n followed by a bracketed n-tuple of terms ti. A term t is
+a variable V or a function symbol f(t1, ..., tk) immediately
+followed by a bracketed n-tuple of terms ti. Constants are
+function symbols of arity 0. Functor-free clauses are clauses
+that contain only variables as terms. The above clause can be
+read as A if B1 and ... and Bn. All variables in clauses are
+universally quantiﬁed, although this is not explicitly writ-
+ten. We call A the head of the clause and B1, ..., Bn the
+
+# queries
+cumul
+1
+7
+52
+258
+1179
+4853
+18997
+69363
+
+level
+1
+6
+45
+206
+921
+3674
+14144
+50366
+
+# free sets
+cumul
+1
+7
+50
+243
+1054
+4111
+15087
+51697
+
+level
+1
+6
+43
+193
+811
+3057
+10976
+36610
+
+# closed sets
+cumul
+level
+1
+1
+7
+6
+50
+43
+215
+165
+828
+613
+1961
+2789
+8684
+5895
+16730
+25414
+
+0
+1
+2
+3
+4
+5
+6
+7
+
+time
+0.01
+0.03
+0.30
+2.04
+15.09
+134.88
+1631.02
+27547.37
+
+Table 3: Number of patterns compared to the number of δ-free patterns and the number of closed patterns, and the time needed
+to compute the closed clauses from the free clauses
+
+level
+
+0
+1
+2
+3
+4
+5
+
+No theory
+
+run
+0.9
+1.1
+4.4
+65.5
+446.3
+4480.1
+
+cover
+0.0
+0.5
+2.6
+57.5
+392.2
+4093.4
+
+#
+1
+8
+58
+326
+1758
+8819
+
+#
+1
+8
+58
+302
+1448
+6187
+
+S-free clauses
+
+run
+1.0
+1.1
+1.7
+32.8
+219.3
+2067.1
+
+cover
+0.0
+0.0
+0.4
+29.0
+193.3
+1872.6
+
+Table 4: Number of patterns generated, total runtime and time needed for the coverage test on the carcinogenesis benchmark
+using the standard algorithm and the algorithms ﬁnding s-free clauses.
+
+body of the clause. A fact is a deﬁnite clause with an empty
+body, (m = 1, n = 0). Throughout the paper, we assume
+that all clauses are range restricted, which means that all
+variables occurring in the head of a clause also occur in its
+body. A substitution θ ={V1 ← t1, ..., Vk ← tk} is an as-
+signment of terms to variables. Applying a substitution θ
+to a clause, atom or term e yields the expression eθ where
+all occurrences of variables Vi have been replaced by the
+corresponding terms. The least Herbrand model of a set of
+deﬁnite clauses is the smallest set of ground facts (over the
+alphabet) that is logically entailed by the deﬁnite clauses.
+
+Acknowledgements
+
+The ﬁrst author was partly supported by the EU FET project
+cInQ (Consortium on Inductive Querying). The authors
+would like to thank Jean-Francois Boulicaut and Jan Struyf
+for interesting discussions about this work, and Andreas
+Karwath for his comments on an early version of this paper.
+
+References
+
+Bergadano, F.; Giordana, A.; and Saitta, L. 1990. Bias-
+ing induction by using a domain theory: An experimental
+evaluation. In European Conference on Artiﬁcial Intelli-
+gence, 84–89.
+
+Blockeel, H.; Dehaspe, L.; Demoen, B.; Janssens, G.; Ra-
+mon, J.; and Vandecasteele, H. 2002. Improving the efﬁ-
+ciency of inductive logic programming through the use of
+query packs. Journal of Artiﬁcial Intelligence Research
+16:135–166.
+
+approximation of frequency queries. Data Mining and
+Knowledge Discovery journal 7(1):5–22.
+
+Buntine, w. 1988. Generalized subsumption and its appli-
+cation to induction and redundancy. Artiﬁcial Intelligence
+36:375–399.
+
+De Raedt, L., and Dehaspe, L. 1997. Clausal discovery.
+
+Machine Learning 26(2-3):99–146.
+
+Dehaspe, L., and De Raedt, L. 1997. Mining association
+rules in multiple relations. In Proceedings of the 7th In-
+ternational Workshop on Inductive Logic Programming,
+volume 1297 of Lecture Notes in Artiﬁcial Intelligence,
+125–132. Springer-Verlag.
+
+Dehaspe, L., and Toivonen, H. 1999. Discovery of frequent
+datalog patterns. Data Mining and Knowledge Discovery
+3(1):7–36.
+
+Helft, N. 1989. Induction as nonmonotonic inference. In
+Proceedings of the 1st International Conference on Prin-
+ciples of Knowledge Representation and Reasoning, 149–
+156. Morgan Kaufmann.
+
+Inokuchi, A.; Washio, T.; and Motoda, H. 2003. Complete
+mining of frequent patterns from graphs: Mining graph
+data. Machine Learning 50(3):321–354.
+
+Malerba, D., and Lisi, F. A. 2001. Discovering associations
+between sapatial objects: An ILP application.
+In Pro-
+ceedings of the 11th International Conference on Induc-
+tive Logic Programming, volume 2157 of Lecture Notes
+in Artiﬁcial Intelligence, 156–163. Springer-Verlag.
+
+Boulicaut, J.-F.; Bykowski, A.; and Rigotti, C. 2003. Free-
+sets: a condensed representation of boolean data for the
+
+Muggleton, S. 1995. Inverse entailment and progol. New
+
+Generation Computing 13(3–4):245–286.
+
+KR 2004    445
+
+level
+
+0
+1
+2
+3
+4
+5
+
+#
+1
+8
+56
+310
+1623
+7903
+
+run
+0.9
+1.1
+7,7
+80.5
+627.6
+11420.0
+
+No theory
+
+cover
+0.0
+0.0
+2.8
+57.5
+390.8
+4070.0
+
+delta
+0.0
+0.0
+3.0
+15.0
+241.9
+6969.0
+
+S-free clauses
+cover
+run
+1.0
+0.0
+0.0
+1.1
+0.5
+2.2
+29.0
+43.9
+194.3
+350.6
+5725.1
+1891.8
+
+#
+1
+8
+56
+286
+1346
+5642
+
+delta
+0.0
+0.0
+0.4
+10.7
+127.3
+3576.8
+
+Table 5: Number of patterns generated, total runtime, time needed for the coverage test and time needed for the discovery of
+the δ-free rules on the carcinogenesis benchmark using the standard algorithm and the algorithms ﬁnding s-free patterns.
+
+# queries
+cumul
+1
+9
+65
+367
+1815
+7982
+
+level
+1
+8
+56
+302
+1448
+6167
+
+# free sets
+cumul
+1
+9
+65
+351
+1697
+7339
+
+level
+1
+8
+56
+286
+1346
+5642
+
+# closed sets
+cumul
+level
+1
+1
+9
+8
+56
+65
+327
+262
+1439
+1112
+4038
+5477
+
+0
+1
+2
+3
+4
+5
+
+time
+0.01
+0.02
+0.14
+0.64
+3.80
+35.65
+
+Table 6: For the carcinogenesis dataset, the number of patterns compared to the number of δ-free patterns and the number of
+closed patterns, and the time needed to compute the closed clauses from the free clauses
+
+ceedings of the 13th International Conference on Induc-
+tive Logic Programming, volume 2835 of Lecture Notes
+in Computer Science, 329–346.
+
+Stumme, G. 2004. Iceberg query lattices for datalog. Tech-
+
+nical Report.
+
+Weber, I. 1997. Discovery of ﬁrst-order regularities in a re-
+lational database using ofﬂine candidate determination. In
+Proceedings of the 7th International Workshop on Induc-
+tive Logic Programming, volume 1297 of Lecture Notes
+in Artiﬁcial Intelligence, 288–295. Springer-Verlag.
+
+Yan, X., and Han, J. 2002. gspan: Graph-based substructure
+pattern mining. In Proceedings of the 2002 IEEE Interna-
+tional Conference on Data Mining (ICDM 2002). Japan:
+IEEE Computer Society.
+
+Zaki, M. J. 2000. Generating non-redundant association
+In Proceedings of ACM SIGKDD Conference on
+
+rules.
+Knowledge Discovery in Databases, 34–43.
+
+Nijssen, S., and Kok, J. N. 2001. Faster association rules
+for multiple relations. In Proceedings of the Seventeenth
+International Joint Conference on Artiﬁcial Intelligence,
+IJCAI 2001, 891–896. Seattle, Washington, USA: Mor-
+gan Kaufmann.
+
+Nijssen, S., and Kok, J. N. 2003. Efﬁcient frequent query
+discovery in farmer. In Proceedings of the 7th European
+Conference on Principles and Practice of Knowledge Dis-
+covery in Databases, volume 2838 of Lecture Notes in
+Computer Science. Springer Verlag.
+
+Pasquier, N.; Bastide, Y.; Taouil, R.; and Lakhal, L. 1999.
+Efﬁcient mining of association rules using closed itemset
+lattices. Journal of Information Systems 24:25–46.
+
+Plotkin, G. 1970. A note on inductive generalization. Ma-
+
+chine Intelligence 5:153–163.
+
+Santos Costa, V.; Srinivasan, A.; Camacho, R.; Blockeel, H.;
+Demoen, B.; Janssens, G.; Struyf, J.; Vandecasteele, H.;
+and Van Laer, W. 2002. Query transformations for im-
+proving the efﬁciency of ilp systems. Journal of Machine
+Learning Research 4:465 – 491.
+
+Srinivasan, A.; Muggleton, S.; Sternberg, M. J. E.; and King,
+R. D. 1996. Theories for mutagenicity: A study in ﬁrst-
+order and feature-based induction. Artiﬁcial Intelligence
+85(1–2):277–299.
+
+Srinivasan, A.; King, R.; and Bristol, D. 1999. An as-
+sessment of ILP-assisted models for toxicology and the
+PTE-3 experiment.
+In Proceedings of the 13th Interna-
+tional Conference on Inductive Logic Programming, vol-
+ume 1634 of Lecture Notes in Artiﬁcial Intelligence, 291–
+302.
+
+Struyf, J., and Blockeel, H. 2003. Query optimization in in-
+ductive logic programming by reordering literals. In Pro-
+
+446    KR 2004
+
+

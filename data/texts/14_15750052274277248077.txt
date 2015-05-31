@@ -1,0 +1,1315 @@
+Real-Time Heuristic Search with Depression Avoidance
+
+Carlos Hern´andez
+
+Jorge A. Baier
+
+Departamento de Ingenier´ıa Inform´atica
+
+Departamento de Ciencia de la Computaci´on
+
+Universidad Cat´olica de la Ssma. Concepci´on
+
+Pontiﬁcia Universidad Cat´olica de Chile
+
+Concepci´on, Chile
+
+Santiago, Chile
+
+Abstract
+
+Heuristics used for solving hard real-time search
+problems have regions with depressions. Such re-
+gions are bounded areas of the search space in
+which the heuristic function is exceedingly low
+compared to the actual cost to reach a solution.
+Real-time search algorithms easily become trapped
+in those regions since the heuristic values of states
+in them may need to be updated multiple times,
+which results in costly solutions.
+State-of-the-
+art real-time search algorithms like LSS-LRTA∗,
+LRTA∗(k), etc., improve LRTA∗’s mechanism to
+update the heuristic, resulting in improved perfor-
+mance. Those algorithms, however, do not guide
+search towards avoiding or escaping depressed re-
+gions. This paper presents depression avoidance,
+a simple real-time search principle to guide search
+towards avoiding states that have been marked as
+part of a heuristic depression. We apply the princi-
+ple to LSS-LRTA∗ producing aLSS-LRTA∗, a new
+real-time search algorithm whose search is guided
+towards exiting regions with heuristic depressions.
+We show our algorithm outperforms LSS-LRTA∗
+in standard real-time benchmarks. In addition we
+prove aLSS-LRTA∗ has most of the good theoreti-
+cal properties of LSS-LRTA∗.
+
+Introduction
+
+1
+In many real-world applications, agents need to act quickly in
+dynamic, initially unknown domains. Example applications
+range from robot navigation, to agent navigation in games
+(e.g., Baldur’s Gate, Starcraft, etc.).
+Indeed, the computer
+game company Bioware imposes a time limit of 1-3 millisec-
+onds for each search episode [Bulitko et al., 2007].
+
+Real-time search (e.g., [Korf, 1990; Koenig, 2001]) is a
+standard paradigm for solving search problems in those set-
+tings. Instead of running a computationally expensive pro-
+cedure to generate a conditional plan at the outset, real-time
+algorithms interleave planning and execution. As such, they
+usually run a computationally cheap observe-plan-act cycle,
+in which the environment is observed, an action is selected,
+and then executed. Like standard A∗ search [Hart et al.,
+1968], they use a heuristic function to guide action selection.
+
+578
+
+However, as the environment is unveiled, the agent updates
+its internal belief about the structure of the search space, up-
+dating (i.e. learning) the heuristic value for some states. The
+observe-plan-act cycle is executed until a solution is found.
+Early heuristic real-time algorithms like LRTA∗ and RTA∗
+[Korf, 1990] perform poorly in presence of heuristic depres-
+sions [Ishida, 1992]. Intuitively, a heuristic depression is a
+bounded region of the search space in which the heuristic is
+unrealistic with respect to the heuristic value of the states in
+the border of the region. When visiting states with heuristic
+depressions, LRTA∗ and RTA∗ usually become “trapped”. To
+exit these regions they will visit most states in the depression,
+possibly many times.
+
+State-of-the-art heuristic real-time search algorithms are
+able to escape heuristic depressions more quickly than
+LRTA∗ or RTA∗. They do so by performing more search,
+more learning or a combination of both. More search typ-
+ically involves selecting an action by looking farther away
+in the search space;
+thus, we say these algorithms per-
+form lookahead search. More learning involves updat-
+ing the heuristic values of several states in a single itera-
+tion. There are many algorithms that use one or a com-
+[Bulitko and Lee, 2006;
+bination of these techniques (e.g.
+Koenig and Likhachev, 2006; Bj¨ornsson et al., 2009; Hern´an-
+dez and Meseguer, 2005; 2007; Koenig and Sun, 2009]).
+LSS-LRTA∗ [Koenig and Sun, 2009] is a state-of-the-art
+algorithm that generalizes LRTA∗ and does both lookahead
+search and learning, that has been shown to perform very well
+in practice. However, despite the use of more elaborate tech-
+niques, it may still perform poorly in presence of heuristic
+depressions. This is because the main mechanism to escape
+depressions remains the same as in early algorithms: to in-
+crease the heuristic value of states inside the depression.
+
+In this paper, we propose an approach to actively guide
+search towards avoiding heuristically depressed regions that
+we call depression avoidance. To apply this approach to a
+real-time search algorithm we need to deﬁne: (1) a mech-
+anism for detecting states that belong to a heuristic depres-
+sion, and (2) a strategy that leads the agent to prefer to move
+to states that are not identiﬁed as being in a heuristic depres-
+sion. We apply this approach to the state-of-the-art algorithm
+LSS-LRTA∗, producing a new algorithm, aLSS-LRTA∗.
+We evaluate aLSS-LRTA∗ on standard benchmarks and
+shows that, although simple, our modiﬁcations to LSS-
+
+Proceedings of the Twenty-Second International Joint Conference on Artificial IntelligenceLRTA∗ yield signiﬁcant performance improvements. On av-
+erage, for an equal amount of lookahead aLSS-LRTA∗ ﬁnds
+better solutions in less time. Additionally, we perform a the-
+oretical analysis showing that desirable properties, such as
+termination, hold for aLSS-LRTA∗.
+
+The paper is organized as follows. We explain basic con-
+cepts of real-time search in the next section. We continue
+elaborating on the concept of heuristic depression. We then
+describe our algorithm in detail and continue with a theoreti-
+cal and experimental analysis. Finally, we brieﬂy sketch our
+conclusions.
+
+2 Preliminaries
+A search problem P is a tuple (S, A, c, s0, G), where (S, A)
+is a digraph that represents the search space. The set S rep-
+resents the states and the arcs in A represent all available ac-
+tions. A does not contain elements of form (x, x). In addi-
+tion, the cost function c : A (cid:2)→ R
++ associates a cost to each
+of the available actions. Finally, s0 ∈ S is the start state, and
+G ⊆ S is a set of goal states. We say that a search space
+is undirected if whenever (u, v) is in A then so is (v, u).
+We assume that in undirected spaces c(u, v) = c(v, u), for
+all (u, v) ∈ A. The successors of a state u are deﬁned
+by Succ(u) = {v | (u, v) ∈ A}. Two states are neighbors
+if they are successors of each other. A heuristic function
+h : S (cid:2)→ [0,∞) associates to each state s an approximation
+h(s) of the cost of an path from s to a goal state. h is consis-
+tent iff h(g) = 0 for all g ∈ G and h(s) ≤ c(s, w) +h( w)
+for all states w ∈ Succ(s). We refer to h(s) as the h-value of
+s. We assume familiarity with the A∗ algorithm [Hart et al.,
+1968]: g(s) denotes the cost of the path from the start state
+to s, and f (s) is deﬁned as g(s) +h( s). The f-value and
+g-value of s refer to f (s) and g(s) respectively.
+
+2.1 Real-Time Search
+The objective of a real-time search algorithm is to make an
+agent travel from an initial state to a goal state performing,
+between moves, an amount of computation bounded by a con-
+stant. An example situation is pathﬁnding in previously un-
+known grid-like environments. There the agent has memory
+capable of storing its current belief about the structure of the
+search space, which it initially regards as obstacle-free (this
+is usually referred to as the free-space assumption [Koenig et
+al., 2003]). The agent is capable of a limited form of sensing:
+only obstacles in the neighbor cells can be detected. When
+obstacles are detected, the agent updates its map accordingly.
+Local Search Space LRTA∗ (LSS-LRTA∗) [Koenig and
+Sun, 2009] (Algorithm 1) is a state-of-the-art real-time
+heuristic search algorithm which generalizes LRTA∗ [Korf,
+1990]. It iteratively executes an lookahead-update-act cycle
+until the goal is reached. The procedure has three local vari-
+ables. Variable s stores the current position of the agent. Vari-
+(cid:3)) contains the cost of moving state s to a successor
+able c(s, s
+(cid:3). Variable h is such that h(s) contains the heuristic value
+s
+for s. All three variables change over time. Initially c is such
+(cid:3)) < ∞ for any two
+that no obstacles are assumed; i.e., c(s, s
+(cid:3). The initial value of h is given as a pa-
+neighbor states s, s
+rameter.
+
+579
+
+In the lookahead phase (Line 3–5), it determines where to
+proceed next. To perform this phase, it uses A∗ search to
+select the best node to go. The search however, is restricted
+to expand at most k nodes. The number k is called lookahead
+parameter, and the set of states generated by A∗ are referred
+to as the local search space. In the update phase (Line 6), it
+updates (raises) the heuristic value of states in the local search
+space to the maximum possible value that keeps the heuristic
+consistent with respect to the other nodes in the frontier of
+the local search space. LSS-LRTA∗ achieves this by a call to
+a version of Dijsktra’s algorithm. Finally, in the acting phase
+(Line 7) it moves the agent to the ﬁnal position, updating the
+cost variable c if obstacles are observed.
+LSS-LRTA∗ is equivalent to LRTA∗ when the number of
+nodes expanded by A∗ is limited to 1 (i.e., only the cur-
+rent state is expanded). Koenig and Sun [2009] show that,
+in several benchmarks, the quality of the solutions returned
+improve as the lookahead parameter increases. Nevertheless,
+they show that total search time increases as more lookahead
+is performed and that LSS-LRTA∗ outperforms incremental
+algorithms like D∗ Lite when under time pressure.
+Algorithm 1: Pseudo-code for LSS-LRTA∗
+1 s ← s0
+2 while s (cid:3)∈ G do
+3
+4
+5
+6
+7
+
+Expand at most k states with A∗
+if the open list is empty then return no-solution
+y ← Best state in the open list
+Update the heuristics of states in the Closed list
+Move the agent from s to y through the optimal path identiﬁed by
+A∗. Stop if an action cost along the path is updated (to inﬁnity).
+s ← current agent position
+Update action costs (if they have increased)
+
+8
+9
+
+3 Heuristic Depressions
+In real-time search problems, however, heuristics usually
+contain depressions.
+Identiﬁcation of these depressions is
+central to our algorithm.
+
+Intuitively, a heuristic depression is a bounded region of the
+search space containing states whose heuristic value is too
+low with respect to the heuristic values of states in the bor-
+der of the depression. Depressions exist naturally in heuris-
+tics used along with real-time heuristic search algorithms and
+are also generated during runtime. As we have seen above,
+heuristic real-time algorithms build solutions incrementally,
+incrementing the heuristic values associated to certain states
+as more information is gathered from the environment.
+
+Ishida [1992] gave a constructive deﬁnition for heuristic
+depression. The construction starts with a node s such that its
+heuristic value is equal to or less than those of the surround-
+ing states. The region is then extended by adding a state of
+its border if all states in the resulting region have a heuristic
+value lower or equal than those of the states in the border. As
+a result, the heuristic depression D is a maximal connected
+component of states such that all states in the boundary of
+D have a heuristic value that is greater than or equal to the
+heuristic value of any state in D.
+It is known that LRTA∗ behaves poorly in presence of
+heuristic depressions [Ishida, 1992]. To see this, assume that
+
+2
+
+A
+
+1
+
+B
+
+1
+
+C
+
+0
+
+D
+
+Figure 1: A 4-state grid-like search space with unitary costs.
+Cells show their h-value. D is the goal state.
+LRTA∗ visits a state in a depression and that the solution node
+lies outside the depression. To exit the depressed region the
+agent must follow a path in the interior of the depressed re-
+gion, say, s1 . . . sn, ﬁnally choosing a state in the border of
+the region, say se. While visiting sn the agent chooses se as
+the next move, which means that se minimizes the estimated
+cost to reach a solution among all the neighbors of sn.
+In
+problems with uniform action costs, this can only happen if
+h(se) is lower or equal than the heuristic value of all other
+neighbors of sn. This fact actually means that the depression
+in that region of the search space no longer exists, which can
+only happen if the heuristic values of states in the originally
+depressed region have been updated (increased). For LRTA∗,
+the update process may be quite costly: in the worst case, in-
+deed, all states in the depression may need to be updated and
+each state may need to be updated several times.
+Ishida’s deﬁnition is, nonetheless, restrictive.
+
+In fact, it
+does not take into account the costs of the actions needed to
+move from the interior of the depression to the exterior. A
+closed region of states may have unrealistically low heuris-
+tic values even though the heuristic values in the interior are
+greater than the ones in the border. We propose a more intu-
+itive notion of depression when costs are taken into account.
+The formal deﬁnition follows.
+Deﬁnition 1 (Cost-sensitive heuristic depression) A con-
+nected component of states D is a cost-sensitive heuristic
+depression of a heuristic h iff for any state s ∈ D and every
+(cid:3)), where
+(cid:3) in the boundary of D, h(s) < k(s, s
+state s
+(cid:3)) denotes the cost of the cheapest path that starts in s,
+k(s, s
+(cid:3).
+traverses states only in D, and ends in s
+
+(cid:3)) + h(s
+
+Figure 1 shows an example search space in which our def-
+inition for cost-sensitive depression defers from Ishida’s. In-
+deed, no matter what “start state” is used with Ishida’s proce-
+dure, A is never part of a heuristic depression. On the other
+hand {A, B} is a cost-sensitive depression. The fact that A is
+in a cost-sensitive depression is important because this means
+that the h-value of A is low with respect to the border cell
+C. Indeed, intuitively if it takes two actions to get to state C,
+then the heuristic value of A should be 3 instead of 2.
+
+4 Depression Avoidance
+As seen above, a major issue in solving real-time search prob-
+lems is the presence of heuristic depressions. Algorithms like
+LSS-LRTA∗, and LRTA∗(k) escape those regions faster than
+LRTA∗ because they increment the heuristic value of more
+states in every iteration. Thus, if a set of states D is a heuris-
+tic depression, and the current position of the agent is in D,
+LSS-LRTA∗, LRTA∗(k) and LRTA∗ exit the region given by
+D when the heuristic value of those states has increased suf-
+ﬁciently so that the depression in D has disappeared. LSS-
+LRTA∗ exits the depressions more quickly than LRTA∗ both
+
+580
+
+because the heuristic function increases for states in D more
+quickly and because of its ability to do lookahead.
+
+To escape heuristic depressions we propose a different
+strategy: depression avoidance, which guides search for a
+quick way out of depressions by explicitly avoiding them.
+Depression avoidance is a very simple principle that dictates
+that search should be guided away from states identiﬁed as
+being in a heuristic depression. There are many ways in
+which one could conceive the implementation of this prin-
+ciple in a real-time heuristic search algorithm. Below, we
+propose one of the many possible realizations of the principle
+within the state-of-the-art LSS-LRTA∗ algorithm. The result
+is aLSS-LRTA∗, an algorithm based on the principle that has
+good theoretical properties.
+aLSS-LRTA∗ is a simple yet effective modiﬁcation of LSS-
+LRTA∗. The main conceptual difference between aLSS-
+LRTA∗ and LSS-LRTA∗ is that the former prefers to move to
+states that are not yet identiﬁed as belonging to a depression.
+To achieve this, we modify two aspects of LSS-LRTA∗. First,
+we modify the procedure that LSS-LRTA∗ uses to update the
+heuristic values to mark the states that are inside depression.
+Second, we modify the mechanism to select at what state the
+agent will attempt to move to. To select the next move, the
+algorithm chooses the best state generated by the lookahead
+phase that has not been marked as in a depression. If such a
+state does not exist the algorithm selects the best state seen
+during the lookahead phase, just like LSS-LRTA∗ would do.
+Details of the pseudo code for aLSS-LRTA∗ are shown in
+Algorithm 2. The lookahead procedure (Line 6) is exactly the
+same used by LSS-LRTA∗: a standard A∗ search that will ex-
+pand at most k nodes and, additionally, stops if the goal state
+is inserted into Open. The set of states that were expanded,
+as usual, are stored in Closed.
+
+The heuristic values of states expanded by the lookahead
+search will be updated by a call to our modiﬁed Dijkstra pro-
+cedure. In a nutshell, this procedure changes the values of the
+heuristic for all states in Closed to the highest possible value
+that guarantees the consistency of the heuristic. The main
+difference between our procedure and that of LSS-LRTA∗ is
+Line 32, which does not exist in LSS-LRTA∗. Here, for a state
+s in the search space, we set s.updated to true if the heuristic
+value for h changes as a result of the update process. In the
+following section, we formally prove that this means that s
+was inside a heuristic depression (Theorem 1).
+
+Finally, in Line 8, the algorithm chooses the next state to
+go to by extracting the state with lowest f-value in Open
+which is not marked. If no unmarked states exist, the algo-
+rithm chooses the state with best f-value in Open.
+An Example Fig. 2 shows an example that illustrates the dif-
+ference between LSS-LRTA∗ and aLSS-LRTA∗ with looka-
+head parameter equal to two. After 3 search episodes, we
+observe that aLSS-LRTA∗ avoids the depression leading the
+agent to a position 2 steps closer to the goal than LSS-LRTA∗.
+
+5 Evaluation
+Below we evaluate aLSS-LRTA∗ both theoretically and ex-
+perimentally.
+
+Algorithm 2: aLSS-LRTA∗: Learning Real-Time A∗
+with propagation and depression avoidance.
+Input: A search problem P , a heuristic function h, a cost function c.
+1 for each s ∈ S do
+s.updated ← f alse
+2
+h0(s) ← h(s)
+3
+4 scurrent ← s0
+5 while scurrent (cid:3)∈ G do
+6
+7
+8
+9
+10
+
+∗ ()
+A
+if Open = ∅ then return no-solution
+snext ← Extract-Best-State()
+Dijkstra ()
+move the agent from scurrent to snext through the path
+identiﬁed by A
+(to inﬁnity).
+scurrent ← current agent position
+update action costs (if they have increased)
+
+∗. Stop if an action cost along the path is updated
+
+11
+12
+
+(cid:3) ∈ Open with minimum f-value is such that s
+
+(cid:3) (cid:3)∈ G
+
+∗
+
+()
+
+13 procedure A
+14
+15
+16
+17
+18
+19
+
+for each s ∈ S do g(s) ← ∞
+g(scurrent) ← 0
+Open ← ∅
+Insert scurrent into Open
+expansions ← 0
+while each s
+and expansions < k do
+
+) +h(s
+
+(cid:3)
+
+)
+
+(cid:3)
+
+s ← argmins(cid:2)∈Openg(s
+Insert s into Closed
+(cid:3) ∈ Succ(s) do
+for each s
+(cid:3)
+if g(s
+) > g(s) +c(s, s
+g(s
+(cid:3)
+s
+Insert s
+
+(cid:3)
+) ← g(s) +c(s, s
+(cid:3)
+.back = s
+
+(cid:3) in Open
+
+) then
+
+(cid:3)
+
+)
+
+expansions ← expansions + 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+∗
+
+A
+T
+R
+L
+-
+S
+S
+L
+
+∗
+
+A
+T
+R
+L
+-
+S
+S
+L
+a
+
+   
+
+
+
+
+
+   
+
+   
+
+
+
+
+
+
+
+
+
+   
+
+
+
+
+
+   
+
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+
+
+
+ 
+
+   
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+   
+
+
+
+ 
+
+   
+
+
+
+ 
+
+	
+
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+   
+
+   
+
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+   
+
+   
+
+   
+
+
+
+
+
+	
+
+	
+
+∗
+
+∗
+
+∗
+
+Figure 2: First 3 search episodes of LSS-LRTA
+(above) and aLSS-
+LRTA
+(below) with lookahead equal to 2 in a 4-connected grid
+world with action unitary action costs, where the initial state is D2,
+and the goal is D4. Numbers in cell corners denote the g-value (up-
+per left), f-value (upper right), h-value (lower left), and new h-value
+of an expanded cell after an update (lower right). Only cells that
+have been in a closed list show four numbers. Cells just generated
+by A
+or (i.e., in their Open lists) show three numbers, since their
+h-values have not been updated. Triangles ((cid:2)) denote states with
+updated ﬂag set to true after the search episode. The heuristic used
+is the manhattan distance. We assume ties are broken by choosing
+ﬁrst right then bottom then left then top adjacent cell. The position
+of the agent is given by the dot. A grid cell is shaded (gray) if it is a
+blocked cell that the agent has not sensed yet. A grid cell is black if
+it is a blocked cell that the agent has already sensed. The best state
+chosen to move the agent to after lookahead is pointed by an arrow.
+
+hn+1 represents the result of updating hn by the call in Line
+9. Likewise, we denote the value of the cost function c in
+aLSS-LRTA∗ at the beginning of the n-th iteration by cn. Fi-
+(cid:3)) denotes the cost of the cheapest path from s to
+nally, kn(s, s
+(cid:3) that traverses states only in Closed until it reaches s
+(cid:3), with
+s
+respect to the cost function cn.
+
+The proposition below gives an expression h-value of a
+state in Closed after the call to the Dijkstra algorithm. In-
+tuitively, the heuristic is updated soundly with respect to the
+boundary.
+Proposition 1 Let s be a state in Closed right after the call
+to A∗ in the n-th iteration of the algorithm. Then,
+kn(s, sb) +h n(sb).
+
+hn+1(s) = min
+
+sb∈Open
+
+The updated ﬂag is set to true as soon as the heuristic has
+
+been updated:
+Proposition 2 If hn+1(s) > hn(s) then s.updated = true
+after the n-th iteration of the algorithm.
+
+The following theorem establishes that whenever a state s
+is marked as updated, then s belongs to a heuristic depression.
+Theorem 1 Let s be a state such that s.updated switches
+from false to true between iterations n and n + 1. Then s is
+in a cost-sensitive heuristic depression of hn.
+Proof: Let D be the maximal connected component of states
+connected to s such that (1) all states in D are in Closed after
+the call to A∗ in iteration n, and (2) any state sd in D is such
+that hn+1(sd) > hn(sd). We prove that D is a cost-sensitive
+heuristic depression of hn.
+
+20
+21
+22
+23
+24
+25
+26
+
+27
+
+41
+42
+
+43
+
+28 procedure Dijkstra ()
+for each s ∈ Closed do h(s) ← ∞
+29
+while Closed (cid:3)= ∅ do
+30
+31
+32
+33
+34
+35
+36
+37
+
+(cid:3) such that s ∈ Succ(s
+(cid:3)
+) do
+(cid:3) ∈ Closed ∧ h(s
+(cid:3)
+) > c(s
+) ← c(s
+(cid:3)
+h(s
+, s) + h(s)
+(cid:3) (cid:3)∈ Open then Insert s
+if s
+
+Extract an s with minimum h-value from Open
+if h(s) > h0(s) then s.updated = true
+if s ∈ Closed then delete s from Closed
+for each s
+
+if s
+
+(cid:3)
+
+(cid:3)
+
+, s) + h(s) then
+(cid:3) in Open
+
+38 procedure Extract-Best-State ()
+39
+40
+
+if Open contains an s such that s.updated = f alse then
+(cid:3)
+) +h(s
+
+s ← argmins(cid:2)∈Open∧s(cid:2).updated=f alseg(s
+s ← argmins(cid:2)∈Openg(s
+
+) +h(s
+
+else
+
+)
+
+(cid:3)
+
+(cid:3)
+
+(cid:3)
+
+)
+
+return s
+
+5.1 Theoretical Analysis
+In this section we show that aLSS-LRTA∗ satisﬁes most of the
+interesting properties of LSS-LRTA∗. Speciﬁcally, we can
+use the same proofs by Koenig and Sun [2009] to prove the
+heuristic h is non-decreasing and remains consistent if the
+provided heuristic is consistent. Below we present an analysis
+of some properties speciﬁc to aLSS-LRTA∗. We establish
+some results that also hold for aLSS-LRTA∗, but that need
+different proofs than those known for LSS-LRTA∗.
+
+Before stating the results we introduce some useful no-
+tation. We denote the heuristic value function h in aLSS-
+LRTA∗ at the beginning of the n-th iteration as hn. As such,
+
+581
+
+(cid:3)) =h n+1(s
+
+(cid:3)). Indeed, s
+
+(cid:3) be a state in the boundary of D. We ﬁrst show that
+Let s
+(cid:3) ∈ Closed ∪ Open. Assume
+hn(s
+(cid:3) ∈ Closed. Then, since s
+(cid:3) (cid:9)∈ D, it must be because it does
+s
+not satisfy condition (2) of the deﬁnition of D, and hence
+(cid:3)) ≤ hn(s
+(cid:3)). However, since the heuristic is non-
+hn+1(s
+(cid:3)). On the other
+decreasing, it must be that hn(s
+(cid:3) is in Open, its heuristic value is not changed and
+hand, if s
+thus also hn(s
+
+(cid:3)) =h n+1(s
+
+(cid:3)) = hn+1(s
+
+Let sd be a state in D. We continue the proof by showing
+(cid:3)), which means
+that hn(sd) is too low with respect to hn(s
+that D is a heuristic depression of hn. We distinguish two
+cases: if s
+
+(cid:3)).
+
+(cid:3) ∈ Closed,
+hn(s
+
+(cid:3)) = kn(s
+
+(cid:3)
+
+(cid:3)
+
+(cid:3)
+
+(cid:3)
+b);
+
+(cid:3)) + hn(s
+
+(cid:3)) + kn(s
+
+(cid:3)) +k n(s
+
+(cid:3)) +h n(s
+
+, sb) +h n(sb),
+
+(cid:3)
+b) + h(s
+
+hn(sd) < kn(sd, s
+
+b∈Open kn(sd, s
+
+(cid:3)). Finally, if s
+
+(1)
+for some sb ∈ Open. On the other hand, since the heuris-
+tic value has increased for sd, hn(sd) < hn+1(sd) =
+in particular, hn(sd) <
+mins(cid:2)
+kn(sd, sb) + hn(sb). Since kn(sd, sb) is the optimal cost to
+go from sd to sb, kn(sd, sb) ≤ kn(sd, s
+, sb). Sub-
+stituting kn(sd, sb) in the previous inequality we have
+, sb) +h n(sb).
+
+(2)
+We now substitute the right-hand side of (2) using (1), and we
+(cid:3) ∈ Open
+obtain hn(sd) < kn(sd, s
+by Proposition 1 and the fact that hn+1(sd) > hn(sd), we
+(cid:3)). This proves that
+also have that hn(sd) < kn(sd, s
+(cid:3)
+sd is in a cost-sensitive heuristic depression of hn.
+Finally, we prove that the algorithm leads an agent to a so-
+lution if such a solution exists when the heuristic is consistent.
+Theorem 2 Let P be an undirected ﬁnite real-time search
+problem such that a solution exists. Let h be a consistent
+heuristic for P . Then aLSS-LRTA∗, used with h, will ﬁnd a
+solution for P .
+5.2 Experimental Evaluation
+We compared aLSS-LRTA∗ with the state-of-the-art LSS-
+LRTA∗ at solving real-time navigation problems in unknown
+environments. For fairness, we used comparable implemen-
+tations that use the same underlying codebase. For example,
+both search algorithms use the same implementation for bi-
+nary heaps as priority queues and break ties among cells with
+the same f-values in favor of cells with larger g-values.
+
+We used six maps from deployed video games to carry
+out our experiments. The ﬁrst three, from the game Bal-
+dur’s Gate, are 512 × 512 cells each. The remaining three
+are 456× 463, 939× 718, and 656× 1491 cells, and are taken
+from the game Dragon Age. All maps were retrieved from
+Nathan Sturtevant’s repository.1
+
+Each map in the repository has a set of associated prob-
+lems. We estimated the hardness of the problems and selected
+the 300 hardest for each map. We estimate the hardness as the
+difference between the optimal cost to reach the goal from
+the initial state and the h-value for the initial state. All maps
+are regarded as undirected, eight-neighbor grids. Horizontal
+
+1http://www.movingai.com/.
+
+For Baldur’s Gate we
+used maps AR0011SR-512, AR0602SR-512, and AR0700SR-512.
+For Dragon Age, we used orz103d, orz702d, and orz900d.
+
+582
+
+k Avg. Cost
+1 1,330,352 1,222.2
+4
+785.6
+657.4
+7
+557.9
+10
+482.8
+13
+422.4
+16
+19
+392.9
+366.0
+22
+350.0
+25
+333.1
+28
+319.5
+31
+34
+314.3
+
+424,693
+285,568
+215,545
+171,338
+139,467
+121,376
+106,256
+95,783
+86,328
+78,582
+73,834
+
+0.001
+0.003
+0.004
+0.006
+0.007
+0.009
+0.011
+0.012
+0.014
+0.015
+0.017
+0.018
+
+981,828 888.9
+330,933 609.4
+228,333 527.4
+182,361 474.2
+147,743 417.9
+125,512 382.5
+109,596 357.2
+95,806 332.5
+87,019 320.8
+78,603 306.2
+72,395 297.4
+67,666 292.2
+
+LSS-LRTA*
+
+aLSS-LRTA*
+
+Time Time/se Avg. Cost Time Time/se
+
+%Cost
+Impr.
+0.001 26.2 ±1.8
+0.003 22.1 ±1.6
+0.004 20.0 ±1.6
+0.006 15.4 ±1.8
+0.008 13.8 ±1.9
+0.009 10.0 ±1.6
+9.7 ±1.5
+0.011
+9.8 ±1.3
+0.012
+9.1 ±1.3
+0.014
+8.9 ±1.3
+0.016
+7.9 ±1.4
+0.017
+8.4 ±1.4
+0.019
+
+Figure 3: Average results for the 6 game maps. For lookahead value
+k, we report the average solution cost (Avg. Cost), and two measures
+of efﬁciency: total runtime (Time), and average runtime per search
+episode (Time/se) in milliseconds. Results obtained over a Linux
+PC with a Pentium QuadCore 2.33 GHz CPU and 8 GB RAM.
+
+√
+and vertical movements have cost 1, whereas diagonal move-
+2. We used the octile distance as heuristic.
+ments have cost
+We ran LSS-LRTA∗ and aLSS-LRTA∗ for 12 different
+lookahead values over each problem. Figure 3 shows av-
+erage cost and time results.
+In addition, we show the per-
+centage cost improvement of aLSS-LRTA∗ over LSS-LRTA∗.
+The value after the “±” deﬁnes a 99% conﬁdence interval
+for the cost improvement. This measure was obtained by
+carrying out a t-test for the cost difference for each indi-
+vidual problem. We observe aLSS-LRTA∗ consistently out-
+performs LSS-LRTA∗, both in total search time and solution
+cost. The greatest improvements are obtained for lower val-
+ues of the lookahead parameter (i.e., when there is more time
+pressure). On the other hand, since the additional overhead
+of aLSS-LRTA∗ (depression marking and move selection) is
+little: time per search episode is essentially the same.
+
+The cost improvement on the 6 different maps we exper-
+imented with is shown in Figure 4. They present a rather
+similar behavior across different domains. This suggests that
+average values are representative of aLSS-LRTA∗’s behavior.
+Although aLSS-LRTA∗ is better suited for applications in
+which the environment is initially unknown, we also eval-
+uated its performance in known environments (this implies
+the cost function c is initialized with the correct values). In
+this case we observed that aLSS-LRTA∗ outperforms LSS-
+LRTA∗ very consistently:
+improvements in this setting do
+not seem to depend on lookahead values. Indeed, cost-wise,
+aLSS-LRTA∗ outperforms LSS-LRTA∗ at least by 26% and
+at most by 40%; time-wise, aLSS-LRTA∗ improves on LSS-
+LRTA∗’s total search time by least 30% and at most by 41%.
+Relative Performance As shown by our experiments aLSS-
+LRTA∗ outperforms LSS-LRTA∗ on average. There are spe-
+ciﬁc cases in which the situation is the opposite. Consider for
+example, path-ﬁnding scenarios that look like Figure 5. Be-
+cause of the way ties are broken, aLSS-LRTA∗ always enters
+the shaded region, as the cells it leaves behind are marked
+as updated. When height is lower than the length of corri-
+dor LSS-LRTA∗ also visits the shaded area. In those situa-
+tions aLSS-LRTA∗ outperforms LSS-LRTA∗ because aLSS-
+LRTA∗ exits the shaded depressed region quickly. However,
+when height is much larger than the length of the corridor,
+
+ 	!"#$
+ 	!"#$
+
+ 	!"#$
+%	!&$
+%
+	!&$
+%	!&$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+
+
+	
+
+
+
+
+	
+
+
+
+
+
+
+
+
+	
+
+	
+
+
+	
+
+	
+
+
+	
+
+	
+
+Figure 4: Cost improvement for different lookahead values
+on maps from Baldur’s Gate (BG) and Dragon Age (DA).
+
+∗
+
+and aLSS-LRTA
+
+Figure 5: A situation in which the relative performance between
+∗
+LSS-LRTA
+changes depending on the value of
+height. S is the start state, and G is the goal. Ties are broken in
+favor of upper cells.
+LSS-LRTA∗ does not enter the shaded region, producing bet-
+ter solutions. We did not observe such bad cases frequently
+in our experiments. Indeed, aLSS-LRTA∗ outperforms LSS-
+LRTA∗ in 75.6% of the problems we tried. We also com-
+puted the relative performance given by the ratio between the
+solution costs for each test case. On its 100 best cases, LSS-
+LRTA∗ obtains on average solutions 5.02 times cheaper than
+those of aLSS-LRTA∗. On the other hand, aLSS-LRTA∗ ob-
+tains on average solutions that are 23.41 times cheaper than
+those of LSS-LRTA∗ on its 100 best cases.
+6 Related Work
+There are a number of real-time search algorithms that
+can be used in initially unknown environments. Besides
+LSS-LRTA∗, RTAA∗ [Koenig and Likhachev, 2006] and
+LRTA∗
+LS(k) [Hern´andez and Meseguer, 2007] are among the
+best-performing real-time search algorithms. LSS-LRTA∗
+ﬁnds better-quality solutions than RTAA∗ for the same value
+of the lookahead parameter; however, LSS-LRTA∗ typically
+requires more time per search episode to obtain solutions of
+similar quality [Koenig and Likhachev, 2006]. LSS-LRTA∗,
+on the other hand, is competitive with LRTA∗
+LS(k) [Hern´an-
+dez and Meseguer, 2007]. None of the abovementioned al-
+gorithms utilize any mechanism comparable to depression
+avoidance. eLSS-LRTA∗ is a preliminary version of aLSS-
+LRTA∗ we presented in an extended abstract [Hern´andez and
+Baier, 2011]. It is outperformed by aLSS-LRTA∗ on average,
+as it usually becomes too focused on avoiding depressions.
+
+Finally, less related to our work are algorithms that abide
+to real-time search constraints but that assume the environ-
+ment is known in advance. Examples are D-LRTA∗ and kNN-
+
+LRTA∗ [Bulitko et al., 2010], TBA∗ [Bj¨ornsson et al., 2009].
+7 Summary
+We have presented a simple principle for guiding real-time
+search algorithms away from heuristic depressions. We inte-
+grated the principle into a state-of-the-art real-time search al-
+gorithm, producing aLSS-LRTA∗, a novel heuristic real-time
+search algorithm. In aLSS-LRTA∗, depressions are avoided
+by marking states in a depression using the Dijkstra algorithm
+and then selecting a state that is not in a depression as the
+next move, if possible. We showed aLSS-LRTA∗ is complete
+and preserves several of the properties of LSS-LRTA∗.
+In
+our experiments, we observed that aLSS-LRTA∗ consistently
+outperforms LSS-LRTA∗, most notably under time pressure.
+Acknowledgements We thank the anonymous reviewers for
+their thoughtful insights. Carlos Hern´andez was partly funded
+a by Fondecyt project #11080063. Jorge Baier was funded by
+the VRI-38-2010 grant from Universidad Cat´olica de Chile.
+References
+[Bj¨ornsson et al., 2009] Y. Bj¨ornsson, V. Bulitko, and N. R. Sturte-
+
+vant. TBA*: Time-bounded A*. In IJCAI, 431–436, 2009.
+
+[Bulitko and Lee, 2006] V. Bulitko and G. Lee. Learning in real
+time search: a unifying framework. Journal of Artiﬁcial Intelli-
+gence Research, 25:119–157, 2006.
+
+[Bulitko et al., 2007] V. Bulitko, Y. Bj¨ornsson, M. Lustrek, J. Scha-
+effer, and S. Sigmundarson. Dynamic control in path-planning
+with real-time heuristic search. In ICAPS, 49–56, 2007.
+
+[Bulitko et al., 2010] V. Bulitko, Y. Bj¨ornsson, and R. Lawrence.
+Case-based subgoaling in real-time heuristic search for video
+game pathﬁnding. Journal of Artiﬁcial Intelligence Research,
+38:268–300, 2010.
+
+[Hart et al., 1968] P. E. Hart, N. Nilsson, and B. Raphael. A formal
+basis for the heuristic determination of minimal cost paths. IEEE
+Transactions on Systems Science and Cybernetics, 4(2), 1968.
+
+[Hern´andez and Meseguer, 2005] C. Hern´andez and P. Meseguer.
+
+LRTA*(k). In IJCAI, 1238–1243, 2005.
+
+[Hern´andez and Meseguer, 2007] C. Hern´andez and P. Meseguer.
+
+Improving LRTA*(k). In IJCAI, 2312–2317, 2007.
+
+[Hern´andez and Baier, 2011] C. Hern´andez and J. A. Baier. Escap-
+ing Heuristic Depressions in Real-Time Heuristic Search (Ex-
+tended Abstract). In AAMAS, Taipei, Taiwan, May 2011.
+
+[Ishida, 1992] T. Ishida. Moving target search with intelligence. In
+
+AAAI, 525–532, 1992.
+
+[Koenig and Likhachev, 2006] S. Koenig and M. Likhachev. Real-
+
+time adaptive A*. In AAMAS, 281–288, 2006.
+
+[Koenig and Sun, 2009] S. Koenig and X. Sun. Comparing real-
+time and incremental heuristic search for real-time situated
+agents. Autonomous Agents and Multi-Agent Systems, 18(3):313–
+341, 2009.
+
+[Koenig et al., 2003] S. Koenig, C. A. Tovey, and Y. V. Smirnov.
+Performance bounds for planning in unknown terrain. Artiﬁcial
+Intelligence, 147(1-2):253–279, 2003.
+
+[Koenig, 2001] S. Koenig. Agent-centered search. Artiﬁcial Intel-
+
+ligence Magazine, 22(4):109–131, 2001.
+
+[Korf, 1990] R. E. Korf. Real-time heuristic search. Artiﬁcial Intel-
+
+ligence, 42(2-3):189–211, 1990.
+
+583
+
+
