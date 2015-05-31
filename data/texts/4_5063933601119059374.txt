@@ -1,0 +1,568 @@
+Seminar/Projekt Bildanalyse (510.052) Graz University of Technology
+Institute for Computer Graphics and Vision
+Hardware Accelerated Per-Pixel Shading
+Gerald Schro¨cker February 27, 2002
+Advisor: Univ.-Ass., Dipl.-Ing. Markus Grabner
+
+Abstract
+Hardware graphics accelerators are becoming programmable at the vertex processing and the fragment processing stage. This allows to write custom shading algorithms which evaluate a shading equation per-pixel in real-time. In this paper we outline the main features of the used graphics hardware, then we describe the techniques to achieve high-quality local illumination using Phong shading. Then we integrate bump mapping as a technique for simulating the effect of light reflecting from small surface perturbations to enhance the realism without increasing the geometric complexity. Finally we compare different shading methods and point out future extensions.
+KEYWORDS: Per-Pixel Lighting, Phong Shading, Bump Mapping, GeForce3
+
+Contents
+
+1 Introduction
+
+1
+
+2 Survey
+
+2
+
+2.1 Lighting Models . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 2
+
+2.2 Bump Mapping . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 2
+
+3 Hardware Architecture 3.1 Vertex Shader . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3.2 Texture Shader . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3.3 Register Combiner . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+3 3 4 4
+
+4 Implementation 4.1 Lighting Model . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4.2 Parameter Interpolation and Normalization . . . . . . . . . . . . . . . . . . . . . 4.3 Tangent Space . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4.4 Bump Mapping . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4.5 Self Shadowing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+5 5 6 8 9 9
+
+5 Results
+
+10
+
+5.1 Normalization . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+5.2 Precision . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+5.3 Bump Mapping . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+5.4 Self Shadowing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+5.5 Timing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+6 Conclusion
+
+14
+
+7 Future Work
+
+15
+
+References
+
+16
+
+List of Figures
+1 Bump Mapped Wall . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 1 2 Vertex Program . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 3 3 General Register Combiner . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 4 Blinn-Phong Lighting Model . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 5 Linear Interpolation versus Spherical Interpolation . . . . . . . . . . . . . . . . . 6 6 Cube Map . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7 7 Definition of Tangent Space . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8 8 Bump Mapping . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9 9 Self Shadowing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10 10 Different Normalization Methods . . . . . . . . . . . . . . . . . . . . . . . . . . . 10 11 Precision Comparison . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11 12 Self Shadowing . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 13 Different Bump Map Methods . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 14 Comparison of Shader Render Times . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+i
+
+1 Introduction
+Until recently, the major concern in the development of new graphics hardware has been to increase the performance of the traditional rendering pipeline. Today, graphics accelerators with a performance of several million textured, lit triangles per second are within reach even for the low end. As a consequence, the focus is beginning to shift away from higher performance towards higher quality renderings and an increased feature set [HS99, KDS02]. The combination of powerful performance with new features allows advanced shading algorithms which improve the realism of the generated images.
+With the help of texture-mapping, the hardware generates interactive imagery with astounding levels of detail and a colorful appearance. But even when textured models are augmented by per-vertex lighting computations, polygonal flatness is still evident [Kil00]. The fundamental limitation has been that the graphics accelerators are mostly fixed-function. Traditionally hardware renderers only support the Phong [Pho75] lighting model in combination with Gouraud [Gou71] shading. Both are relatively easy to implement in hardware. However Gouraud shading looks good only if a highly tesselated surface is used [Kau99]. Otherwise the drawbacks of Gouraud shading as diffused, crawling highlights and Mach banding become evident [PAC97].
+But now consumer-level graphics hardware is rapidly becoming programmable at both the vertex processing and the fragment (pixel) processing stage. The Nvidia GeForce3 chip is the first example of such hardware. This allows to write custom shading algorithms ­ so-called shaders ­ which evaluate a shading program per-pixel in real-time. These shading algorithms can more realistically model the enormous variety of materials and lighting effects that exist in the real world (Figure 1). Shaders are nothing new in the graphics industry. Pixar, for example has been using them for years to create their amazing films. The basic concept is pretty simple ­ run a program for each fragment in the graphics pipeline to generate the required color and position for rendering the final image [MW01].
+Figure 1: Bump Mapped Wall
+In this paper we will develop per-pixel shading techniques which run in one rendering pass on advanced graphics accelerators like the GeForce3. We restrict to onepass, because multipass algorithms suffer a severe performance penalty if the geometry must be sent through the pipeline more than once. Effectively, the utilization of the geometry stage of the pipeline is divided by the number of passes, since the geometry of each pass is identical. This is a problem, as many applications are geometry transformation or geometry bandwidth limited [MH99]. In addition, multipass algorithms compound the problems coming from the limited precision (mostly 8 bit) of the rasterizing hardware.
+1
+
+2 Survey
+2.1 Lighting Models
+Early work on shading models has been done during the seventies at the University of Utah. A simple model which accounts for diffuse surfaces was proposed by Gouraud [Gou71]. In 1975 Phong [Pho75] proposed the first model in computer graphics able to deal with non-diffuse surfaces. In this model the color of a pixel is expressed as a linear combination of a diffuse part and a specular part. Blinn improved the physical correctness of this model by handling energy conservation and made it visually more satisfying. This so-called Blinn-Phong model [Bli77] is usually used for hardware accelerated lighting.
+These early models were ad hoc empirical models without any exact value of energy or intensity. The most important of physically more correct models are the ones by Torrance and Sparrow [TS67] and Cook and Torrance [CT81]. The Torrance-Sparrow model uses a Gaussian micro facet distribution function and a geometric attenuation factor based on the assumption of v-shaped grooves on the surface. He et al. [HTSG91] proposed a model based directly on the Kirchhoff theory of electromagnetic fields. This model is capable of simulating even more physical effects, although at significantly increased computational cost. In addition to isotropic models, anisotropic models have also been proposed. Banks [Ban94] handles anisotropic reflections by assuming small fibers along a given tangent, while Cabral et al. [CMS87] and Poulin and Fournier [PF90] use simulations of different kinds of micro geometry. Ward [War92] modified the Torrance-Sparrow model by using an anisotropic micro facet distribution function.
+As mentioned above, hardware based rendering methods usually use the Blinn-Phong model [Bli77], because of its mathematical simplicity. However, Heidrich et al. [HS99, Hei99] recently showed how to handle more complex BRDF models by factoring the Banks model [Ban94] and the Cook-Torrance model [CT81] analytically, and storing the factors in texture maps. The original model can then be reconstructed using texture mapping. Kautz et al. [KM99, KS00] reparameterized BRDFs and then decomposed them numerically. Again the original model is reconstructed using texture mapping. Both methods assume smoothly varying normals and tangents, which means they can not be combined with bump mapping [KDS02].
+2.2 Bump Mapping
+Bump mapping was originally introduced by Blinn [Bli78]. It has recently found its way into hardware-accelerated rendering. The first technique that worked on consumer graphics hardware is called texture embossing [MBGN98]; it is a multipass method that is quite limited. Dot product bump mapping [Kil00] is a better method to render diffuse and specular reflections from small surface bumps. It directly stores the normals of the surface in texture maps, but needs advanced hardware features, namely the ability to compute per-pixel dot-products.
+Graphics hardware researchers have also proposed a variety of approaches for implementing bump mapping through dedicated hardware schemes. Evans & Sutherland [CG96] and SGI [PAC97] have both proposed bump mapping approaches for high-end 3D graphics hardware. Both approaches propose to support bump mapping in the context of hardware that supports per-fragment lighting operations. The SGI technique introduced lighting in tangent space which is also used in this paper. Researchers at the German National Research Center for Information Technology have described several approaches for implementing hardware bump mapping [EJRW96, BERW97, ERSW98]. A more general approach was used by Olano and Lastra [OL98, LMOW95], who have built graphics hardware that can run small shading programs and is therefore also capable of doing bump mapping. In this paper we will use a combination of the Blinn-Phong lighting model [Bli77] with dot product bump mapping [Kil00] to achieve high quality per-pixel shading on current graphics hardware.
+2
+
+3 Hardware Architecture
+The one important change in new graphics hardware is the innovative programmable aspect, which marks a change from incrementally adding dedicated hardware to perform every new feature, into an orthogonal architecture that can be programmed to perform a larger subset of the existing functionality [CB02]. For real-time rendering a completely programmable graphics solution is impractical ­ at least for now. Therefore programmability is enabled in two interesting areas, while leaving the rest of the graphics pipeline running as it always has [MW01]. Until now these features are optional extensions to the OpenGL standard [SA01] and thus hardware dependent. Since every manufacturer of graphics hardware defines its own extensions, we will restrict our description to graphics boards with Nvidias GeForce3 processor.
+
+3.1 Vertex Shader
+A vertex shader [LKM01] is a small assembly-language program. When enabled, it replaces the transform- and lighting-computations of the fixed-function pipeline. Therefore a vertex shader is responsible for transforming vertex coordinates to clip-space, lighting, and generating texture-coordinates. But it is not limited to that, additionally it can compute a lot of custom effects. A vertex shader operates on a single vertex at a time. It does not operate on primitives and is unable to generate additional or new vertices. Frustum clipping, perspective divide and viewport transformation are leaved to fixed processing stages.
+The computation-model of vertex shaders is straightforward. For every vertex to be processed, the vertex shader executes its program. It has access to four different types of memory locations: the per-vertex data of an incoming vertex, constant memory, temporary registers, and per-vertex output-registers (Figure 2). The computation-model is stateless: the outcome of a vertex shader depends only on the instructions executed, the incoming per-vertex data, and constant memory. Vertex shaders therefore cannot generate data that persists longer than their execution. In particular, they cannot generate data to be used when processing the next vertex [MW01]. The basic data type is the quad-float vector. In order to deal with efficient scalar
+
+Input: 16 quad floats, flexible mapping
+Output: 13 quad floats, fixed mapping
+
+Vertex Attribute Registers
+V[0] ... v[15] r
+
+Program Parameter Registers
+
+CPU
+Up to 128 Instructions
+w
+Vertex Result Registers
+o[HPOS] ... o[TEX3]
+
+r C[0] ... c[95]
+r/w Temporary Registers
+R0 ... R11
+A0.x Address Register
+
+Constants: 96 quad-floats (read-only)
+Registers: 12 quad-floats (read/write)
+
+Triangle Rasterizer
+
+Figure 2: Vertex Program
+
+packing and extraction, the input vectors can have their components arbitrarily rearranged or replicated (swizzled), output writes have a component write mask. The instruction set consists of 17 operations, these can be divided into vector, scalar and miscellaneous operations. No branching jumping or looping is supported to maintain pipeline efficiency. All instructions have the same latency, this limits the complexity of any instruction but improves programmability
+
+3
+
+and simplifies the hardware. The instruction set supports standard MOV, MUL, ADD instructions, dot-products (DP3, DP4), reciprocals (RCP) and reciprocal square roots (RSQ). Two special instructions exist for lighting purposes (LIT, DST). The remaining miscellaneous arithmetic instructions are logarithm (LOG), exponentiation (EXP), minimum/maximum (MIN, MAX) and comparison operators (SLT, SGE). The ARL instruction can be used for relative addressing of constant memory.
+
+3.2 Texture Shader
+Texture shaders [Kil01] provide a superset of conventional OpenGL texture addressing [SA01]. They expose a number of operations that can be used to compute texture coordinates perfragment rather than using simple interpolated per-vertex coordinates. The 21 different shader operations belong to four main categories:
+
+· Conventional Texture Access. This are the standard 1D, 2D, 3D texture access modes, furthermore cube map textures and rectangular textures are supported.
+· Dependent Texture Access. These modes use the result from a previous texture stage to affect the lookup of the current stages. Dependent 2D scaling and biasing is possible.
+· Dot Product Texture Access. These operations calculate a high precision (float) dot product from texture coordinates and a vector derived from the results of a previous shader stage. The resulting scalar value is used for accessing a texture.
+· Special Modes. These operations cull the current fragment or convert the texture coordinates directly to colors without accessing a texture.
+
+In order to support the various per-pixel math that must be done in the texture shaders, a number of new texture formats for encoding vectors are introduced. Most notable signed texture formats and 16 bit high precision formats. This 16 bit textures have only two 16 bit channels, the third channel is a hemispherical projection of first two (Formula 1).
+
+t = hi, lo, 1 - hi2 - lo2
+
+(1)
+
+The filtering for each component is done in 16 bit, the hemispherical projection is performed after the filtering. This results always in a unit length vector.
+
+3.3 Register Combiner
+OpenGL specifies multi-texturing [SA01] as a strict sequence of texturing stages, which allows to combine each texture with the result of the previous stage. Although the basic idea of multitexturing is represented by this specification, the concept of a static texture pipeline turns out to be not flexible enough for many desired applications. Therefore recent graphics boards support multi-stage rasterization, which allows to explicitly control how color-, opacity- and texture-components are combined to form the resulting fragment. This allows rather complex calculations to be performed in a single rendering pass. In order to gain explicit control over per-fragment computation, Nvidia provides the register combiner extension [Kil01]. With this extension enabled, the standard OpenGL texturing units are completely bypassed and substituted by a register-based rasterization unit. This unit consist of eight extremely flexible general combiner stages and one final combiner stage. A diagram of a general combiner is shown in Figure 3.In a register combiner per-fragment information is stored in a set of input registers. The contents of these registers can be arbitrarily mapped to the four variables A, B, C and D.
+
+4
+
+22 33
+discard
+Figure 3: A general combiner stage supports arbitrary register mappings and complex arithmetic computations.
+After combining these variables, i.e. by dot product (A · B) or component-wise weighted sum (AB + CD), the results are scaled and biased and finally written to arbitrary output registers. The output registers of the first combiner stage are then the input registers for the next stage. An additional feature of this hardware is, that fixed point color components, which are usually clamped to a range of [0, 1] can internally be expanded to a signed range [-1,1]. This allows vector components to be stored in the color registers without the need to internally scale and bias them. After the multi-stage rasterization the standard OpenGL per-fragment operations, like depth test or alpha-blending are performed on the resulting fragment output from the final combiner stage.
+4 Implementation
+4.1 Lighting Model The goal of realistic rendering is to create computer generated pictures of synthetic scenes almost indistinguishable from photographs of real environments. This goal implies to simulate as close as possible the behavior of light. Such a simulation involves two different processes, the first one, global illumination, collects the contributions of all parts of the scene which are illuminating a given point. For real-time rendering this is too computationally intensive and this contributions are summed in an ambient term. The second process, local illumination, computes the luminance of a point as a function of incoming light and material properties.
+
+(a) Diffuse Reflection
+
+(b) Specular Reflection
+
+Figure 4: Blinn-Phong Lighting Model
+
+Two kinds of surfaces can be distinguished according to the way they reflect light. On one hand, there are diffuse surfaces for which light is reflected in every direction (Figure 4a). On the other hand, there are specular surfaces for which light is reflected only in a small area around
+
+5
+
+the mirror direction (Figure 4b). There are many lighting models to describe this behavior (see [Sch94] for a survey). For simplicity we will use the Blinn-Phong [Bli77] lighting model. It is an ad hoc empirical model without any exact value of energy or intensity. But it is computationally efficient and provides realistic-looking pictures. The vectors and angles involved in this lighting model are shown in Figure 4.
+
+Iout = ILightkd max(0, N · L) + ILightks max(0, N · H)n
+
+(2)
+
+Equation 2 defines the Blinn-Phong lighting model. ILight is the color of the light, kd is the diffuse color, ks is the specular color; n is the specular exponent which defines the shininess of
+
+the surface. N is the normalized surface normal, L is the normalized direction vector pointing
+
+to the light source. The half-angle vector H is the half-way unit vector between L and V defined
+
+in Formula 3.
+
+H = L+V L+V
+
+(3)
+
+Where V is the normalized vector to the viewer. It is important to max out negative dot product terms, as a negative dot product indicates that the point is in shadow and receives no light. The key aspects for successful per-pixel lighting are how to provide the needed vector parameters (N , L and H) for evaluating the lighting equation and how to compute the per-pixel dot products. In the next Section we will see how to interpolate and normalize this vectors.
+
+4.2 Parameter Interpolation and Normalization
+Phong shading implies that for every pixel, the vectors being involved in the shading equation are interpolated, normalized and their dot product computed. Without normalization the highlights get lost across a polygon. To be general, the interpolation of two vectors v1 and v2 is considered. This can be any vectors: the light vector L, viewing vector V or normal vector N.
+
+4.2.1 Spherical Interpolation
+The dot product between two vectors is only equivalent to the cosine of the angle (used in the shading equation) if the two vectors are unit vectors. So the two unit vectors v1 and v2 should be interpolated in a way that the interpolant v(t) is moving uniformly between the two vectors and the length remains one. As [Moh01] point out this interpolations works on the surface of the unit sphere and therefore it is called spherical interpolation (Formula 4).
+
+v(t)
+
+=
+
+sin(1 - t) sin 
+
+v1
+
++
+
+sin(t) sin 
+
+v2
+
+(4)
+
+Where cos  = v1 · v2. Unfortunately spherical interpolation is not available on current graphics accelerators, only linear interpolation is supported. When using linear interpolation this results
+
+in shortened vectors (Figure 5) and wrong shading intensities.
+
+Linear
+V1
+
+Spherical
+V(t)
+
+V2
+
+Figure 5: Linear Interpolation versus Spherical Interpolation
+
+6
+
+4.2.2 Cube-Map
+One method to renormalize the vectors is to use a cube map texture. Cube map texturing is a form of texture mapping that uses a 3D direction vector built from the texture coordinates (s,t,r) to access a texture that consists of six square 2D images arranged like the faces of a cube centered around a coordinate system origin [Kil00]. Cube map texturing is often used for environment mapping [Gre86] because the cube face images can capture a complete omnidirectional view of the environment around a point. However, this is just one application of cube maps, they can be used for all sorts of directional lookups (Figure 6a).
+
+(a) Directional Access
+
+(b) RGB Coded Normalization Faces
+
+Figure 6: Cube Map
+
+For the purpose of mapping a direction vector to a cube map texel, first the face that the vector pierces has to be determined. This is accomplished by determining which vector component has the largest magnitude. The greatest magnitude component and its sign determine the cube map face. Second, the remaining two components are divided by the component of the largest magnitude. This effectively projects these two components onto the selected cube map face. Finally, the two projected coordinates are scaled and biased to compute a valid 2D texture coordinate used to access the texture image for the selected face [Kil00].
+
+v=
+
+v v
+
+= v = v·v
+
+v vx2 + vy2 + vz2
+
+(5)
+
+In order to normalize a vector, the cube map can be thought as a way to store a function lookup table (with linear interpolation) indexed by a direction vector. This means that vectors of varying length which point in the same direction do not change the lookup result. The normalization given in Formula 5 is precomputed for discrete values of v and stored in the cube map. Since parts of the render pipeline work only with positive values, the signed vector components must be range compressed from [-1, 1] to [0, 1] and stored as colors (Figure 6b).
+
+4.2.3 Register Combiners
+A faster technique for normalization without using texture maps is to use the register combiner extensions [Kil01]. With register combiners only addition, subtraction, multiplication and dot products are possible (Section 3.3). Direct computation of the normalization equation shown in Formula 5 is not possible. Given that the vector v is derived from the interpolation of a unit-length vector across the polygon and the angle between the per-vertex vectors is not too big, this expression can be approximated by a Taylor series (Formula 6).
+
+v = v 1 - 1 (v · v - 1) + 3 (v · v - 1)2 - 5 (v · v - 1)3 + 35 (v · v - 1)4 - . . . 2 8 16 128
+
+(6)
+
+7
+
+Given the assumptions mentioned above and the limited 8 bit precision in the register combiners this expressions is truncated after the linear term (Formula 7).
+
+v
+
+= v (3 2
+
+-
+
+v
+
+·
+
+v)
+
+=
+
+v
+
++
+
+0.5v(1
+
+-
+
+v
+
+·
+
+v)
+
+(7)
+
+The last expression can be implemented directly with register combiner arithmetic in two general
+
+combiner stages. If two vectors need to be renormalized this can be accomplished in three stages.
+
+4.3 Tangent Space
+Lighting results can be computed in an arbitrary 3D coordinate system as long as all the vector parameters involved are oriented with respect to the same coordinate system [Kil00]. This freedom allows one to select the most convenient coordinate system for lighting. Tangent space (or texture space) is just such a local coordinate system. There are mainly two benefits from lighting in tangent space:
+1. The normal vector N equals always (0, 0, 1) in tangent space. Therefore for Phong lighting N needs no longer interpolated and normalized (only L and H).
+2. As Kilgard [Kil00] develop, in tangent space the perturbed normal for bump mapping can be read directly from a texture1. No more math such as normalization etc. is necessary.
+This makes tangent space an efficient coordinate system for lighting computations with or without bump mapping. The orthonormal basis for tangent space is the normalized unperturbed surface normal N , the surface tangent vector T , and the binormal B defined as N ×T (Figure 7) [Kil00]. For the illumination calculation to proceed properly, the light and half-angle vectors
+
+Figure 7: Definition of Tangent Space
+
+are transformed into tangent space via a 3 × 3 matrix whose columns are T , B, and N . For
+
+instance the light vector L is transformed as shown in Formula 8.
+
+
+
+LT
+
+=
+
+L · 
+
+Tx Ty
+
+Bx By
+
+Nx Ny
+
+
+
+(8)
+
+Tz Bz Nz
+
+The transformations of the light and half-angle vectors should be performed at every pixel; however, if the change of the local tangent space across a polygon is small, a good approximation can be obtained by transforming the vectors only at the polygon vertices. They are then interpolated and normalized in the polygon interior. This is frequently a good assumption because tangent space changes rapidly in areas of high surface curvature and an application will need to tessellate the surface more finely in those regions to reduce geometric faceting [PAC97]. Therefore tangent space is constructed efficiently on a per-vertex basis with the help of a vertex shader (Section 3.1).
+
+1as long as some conditions, mainly the so-called square patch assumption are observed [PAC97, Kil00]
+
+8
+
+4.4 Bump Mapping
+Until now we have almost exclusively treated Phong shading. An additional way to add more realism to a rendered scene is to use bump mapping. Bump maps are becoming popular for hardware accelerated rendering, because they allow to increase the visual detail of a scene without requiring excessive amounts of geometric detail. It is a technique that was invented by Blinn [Bli78] to add roughness or wrinkles to a smooth surface. It does not change the underlying geometry of the model, but fools the shading to produce an interesting surface by using a perturbed surface normal N read from the bump map (Figure 8a) [Kug98]. Bump mapping is a very efficient approach because it decouples the texture-based description of small-scale surface irregularities used for per-pixel lighting computations from the vertex-based description of large-scale object shape required for efficient transformation, rasterization and hidden surface removal [Kil00].
+
+(a) Perturbed Normals with Bump Mapping
+
+(b) Color Coded Bump Map
+
+Figure 8: Bump Mapping
+
+Since lighting is already done in tangent space ­ where the large-scale normal N is always (0, 0, 1) ­ the perturbed small-scale surface normal N can be read directly from a texture map (see also the preceding Section). The bump map can be constructed from a height map by
+using finite differences to get the local tangent plane and the corresponding surface normal. As texture maps store only positive values, the signed values for N must be range compressed from [-1, 1] to [0, 1] and stored as colors (Figure 8b). The mostly blue appearance is because the straight up normal (0, 0, 1) is color coded as (0.5, 0.5, 1.0).
+
+4.5 Self Shadowing
+
+When bump mapping, there are actually two surface normals that should be considered for lighting. The unperturbed normal N is based on the surface's large-scale geometry, while the perturbed normal N from the normal map is based on the small-scale structure. Either normal can create self-shadowing situations. Figure 9 shows a situation where the perturbed normal N is subject to illumination (i.e. L · N is positive). However, the point on the surface should not receive illumination from the light because the unperturbed normal N indicates that the point is in shadow due to the large-scale geometry [Kil00]. In order to account for self-shadowing due to the perturbed surface normal and the unperturbed normal the lighting equation 2 should be rewritten as in Equation 9.
+
+Iout = ILightsself kd max(0, N · L) + ILightsself ks max(0, N · H)n
+
+(9)
+
+9
+
+Figure 9: Self Shadowing
+
+where
+
+sself =
+
+1 L·N >0 0 L·N 0
+
+Without this extra level of clamping, bump-mapped surfaces can show false illumination artifacts in otherwise dark regions (see Figure 12). In practice, the step function of sself shown above can lead to temporal aliasing artifacts, as pixel along the self-shadowing boundary may pop on and off abruptly. Therefore it is better to replace the step function by a steep ramp [Kil00].
+
+5 Results
+5.1 Normalization At first we will show in Figure 10 the effects of different vector normalization methods. So as to avoid precision problems the specular exponent is relatively small (n = 8 ). Gouraud shading
+
+Figure 10: Quality of Different Normalization Methods
+to the left is only shown for reference purposes. Without normalization it is clearly visible, that the shape of the highlight and intensity are not correct. Due to linear interpolation the halfangle vector gets to short and the highlight is too dim. With register combiner normalization (Figure 10, middle) the results are astonishingly good. Regardless that only a linear square root approximation is used for normalization (Section 4.2.3). The visible banding effects are primary caused from the limited precision for the exponentiation of the specular intensity (see the next Section). 8 bit cube map normalization works not as good as expected. One cause is
+10
+
+that one more bit in comparison to register combiner normalization gets lost as the whole range [-1, 1] must be range compressed to [0, 255] (register combiners work internally with 8+1 bits so the range is [-255, 255]). The best render quality is reached by using a 16 bit normalization cube map (rightmost image) in combination with a high precision dot product in the texture shaders. Note, that 16 bit normalization cube maps can only be used in conjunction with a dot product in the texture shader unit as the register combiners cannot work with 16 bit values. 5.2 Precision Computations in the register combiners are performed in 8 bit (+ 1 sign bit) fixed comma, this results in precision and dynamic range problems. In order to isolate precision problems from interpolation and normalization issues the used sphere model is very high tesselated (about 40k triangles) and the best available normalization technique is used. Also no texturing or bump mapping is used to make the precision problems clearly visible. In the shader with register
+Figure 11: Comparison of Precision Problems 11
+
+combiner normalization (Figure 11, left column), the exponentiation is computed by repeated self multiplication. One sees, that the higher the exponent gets, the greater the precision problems are. A specular exponent of n = 32 is the highest that can be reached, because every self multiplication needs a register combiner stage and some are already used for normalization. The shader with table lookup (Figure 11, middle column) works far better. Here the result of a high precision dot product between N and H is used to access a texture where the specular intensity is stored. These values are stored as 8 bit values, but through the use of linear interpolation between the table values the quality is very good. The standard Gouraud shader (Figure 11, right column) is used only for reference purpose as no per-pixel shading takes place. It should be noted, that in the inner zone of the highlight the Gouraud shader performs still better than the texture shader, because the exponentiation function gets very steep near one and there are too few values in the table to interpolate perfectly.
+5.3 Bump Mapping After the qualitative comparison of different implementation variants, we will now examine how these quality differences show up with activated decal and bump map textures. Unfortunately bump mapping or even texture mapping is not possible for shaders with 16 bit cube map normalization as all four texture units are occupied by this task. Surprisingly the different normalization techniques and precision issues shown in the preceding two Sections have very little impact on the obtained image quality when bump mapping is used (Figure 13). We assume that the different surface normals read from the bump map result in rapid changing lighting intensities and therefore the less perfect shading qualities get lost in noise. Therefore using no normalization or register combiner normalization gives probably enough image quality. Although with the table based texture shader much higher specular exponents can be rendered.
+5.4 Self Shadowing Using a self-shadowing term reduces artifacts from false lighting considerable (Figure 12). The more rough the surface gets (scale of the bumps increase) the worse the artifacts get. Also if the camera or the model moves, the false specular highlights flicker in and out. A self-shadowing term almost eliminates this problems.
+Figure 12: Self Shadowing
+12
+
+Figure 13: Comparison of Different Bump Map Methods 13
+
+5.5 Timing
+Finally we compare the render speed of different shaders. We have tested all possible combinations of vector normalization methods (Section 4.2), dot product computation (in the texture shader unit or in the register combiners) and the usage of a decal and a bump map texture. All timings have been done for a screen-filling mesh with 20k triangles (results for other triangle counts are similar). We would like to point out some particular results from Table 14a. For
+
+Shader
+Gouraud No Norm. Cube Norm. RC Norm. Tex Dot Tex Dot Cube
+Used Textures
+
+FPS
+abs. rel.
+175 100% 172 98% 172 98% 141 81% 121 69% 83 47%
+
+FPS
+abs. rel.
+158 90% 156 89% 110 63% 119 68% 71 41%
+--
+
+only Phong
+
+Phong + Decal Texture
+
+FPS
+abs. rel.
+-110 63% 96 55% 84 48% 56 32%
+--
+Phong + Decal Texture + Bump
+Texture
+
+(a) Render Time Table
+
+100%
+
+75%
+
+50%
+
+25%
+
+0%
+
+Gouraud
+
+No
+
+Norm. Cube
+
+N
+
+orm. R
+
+C
+
+Norm.
+
+T
+
+ex Dot Tex
+
+Dot
+
+Cube
+
+(b) Render Time Chart
+
+Figure 14: Comparison of Shader Render Times
+
+only Phong Texture Map
+Bump Map
+
+simple Phong shading without bump mapping or texturing, the shader with register combiner normalization runs at 80% of the speed of standard Gouraud shading, although much better visual quality is obtained (Figure 10). The shader with 16 bit cube map normalization and texture shader dot product witch delivers the best image quality (Figure 11) runs with about half the speed of Gouraud shading. If shading with a decal texture and bump mapping is enabled, the shader with register combiner normalization runs also with slightly less than half the speed of standard Gouraud shading although the visual detail and shading quality are ways better (Figure 13).
+
+6 Conclusion
+The programmability is the key aspect of the Geforce3 graphics hardware. Vertex programs, texture shaders and register combiners provide a way to take control of the graphics pipeline at various stages. All these pieces together enable high quality real-time per-pixel shading. In the future one can expect to get even closer to a fully hardware-accelerated RenderMan [Ups90] like programmable shading. Despite the great technological progress, a few drawbacks make it difficult to develop high-quality shaders: it would be very helpful if the normal, viewing, halfangle vector etc. were interpolated using length preserving specular interpolation, since the currently supported linear interpolation leads to a number of problems and makes expensive per-pixel normalization (Section 4.2) necessary. The register combiners have been proven to be a good way to implement flexible per-pixel operations. Although a higher dynamic range and a higher precision would make them even more useful. Also clamping of color values often occurs at inconvenient places in the graphics pipeline.
+
+14
+
+7 Future Work
+In our current work, the vectors used to construct the tangent space (normal, tangent and binormal) are derived from the analytical definition of the used surface. In order to make the promising results for high-quality per-pixel shading applicable to a wide range of applications this vectors should be computed from an ordinary triangle mesh exported from a modeling application. By this means per-pixel lighting could be used for arbitrary scenes. A possibility would be to use the parametrization of the surface given by texture coordinates to define a tangent direction. Another reasonable extension would be to apply a more realistic shading model than the currently used Blinn-Phong [Bli77] shading model. For example the Cook & Torrance [CT81] model or even true BRDF distributions [MAA01] could be used. Kautz [Kau99, KM99, KS00] describe a very promising approach which unfortunately needs too many render passes on current hardware. Furthermore it would be very interesting to add a per-pixel lighting distance attenuation term to the used shading models.
+15
+
+References
+
+[Ban94]
+
+David C. Banks. Illumination in diverse codimensions. In Andrew Glassner, editor, Proceedings of SIGGRAPH '94 (Orlando, Florida, July 24­29, 1994), Computer Graphics Proceedings, Annual Conference Series, pages 327­334. ACM SIGGRAPH, ACM Press, July 1994. ISBN 0-89791-667-0.
+
+[BERW97] K. Bennebroek, I. Ernst, H. Ru¨sseler, and O. Wittig. Design principles of hardwarebased Phong shading and bump-mapping. Computers and Graphics, 21(2):143­149, March­April 1997.
+
+[Bli77]
+
+James F. Blinn. Models of light reflection for computer synthesized pictures. Computer Graphics, 11(2):192­198, July 1977.
+
+[Bli78]
+
+James F. Blinn. Simulation of wrinkled surfaces. Computer Graphics, 12(3):286­ 292, August 1978.
+
+[CB02]
+
+Joao Comba and Rui Bastos. Special effects with current graphics hardware. Revista de Informatica Teorica e Aplicada (to appear), 2002.
+
+[CG96]
+
+Muchael Cosman and Robert Grange. Cig scene realism: The world tomorrow. In Proceedings of I/ITSEC, page pp. 628, 1996.
+
+[CMS87] Brian Cabral, Nelson Max, and Rebecca Springmeyer. Bidirectional reflection functions from surface bump maps. volume 21, pages 273­281, July 1987.
+
+[CT81]
+
+R. L. Cook and K. E. Torrance. A reflectance model for computer graphics. volume 15, pages 307­316, August 1981.
+
+[EJRW96] I. Ernst, D. Jack`el, H. Ru¨sseler, and O. Wittig. Hardware-supported bump mapping. Computers and Graphics, 20(4):515­521, July­August 1996.
+
+[ERSW98] I. Ernst, H. Ru¨sse1er, H. Schulz, and O. Wittig. Gouraud bump mapping (color plate p. 154). In Stephen N. Spencer, editor, Proceedings of the Eurographics / Siggraph Workshop on Graphics Hardware (EUROGRAPHICS-98), pages 47­54, New York, August 31­September 1 1998. ACM Press.
+
+[Gou71] Henri Gouraud. Computer display of curved surfaces. IEEE Trans. Computers, C-20(6):623­629, 1971.
+
+[Gre86]
+
+Ned Greene. Environment mapping and other applications of world projections. IEEE Computer Graphics and Applications, 6(11), November 1986. revised from Graphics Interface '86 version.
+
+[Hei99]
+
+Wolfgang Heidrich. High-quality Shading and Lighting for Hardware-accelerated Rendering. PhD thesis, Technische Fakulta¨t der Universita¨t Erlangen-Nu¨rnberg, 1999.
+
+[HS99]
+
+Wolfgang Heidrich and Hans-Peter Seidel. Realistic, hardware-accelerated shading and lighting. In Alyn Rockwood, editor, Siggraph 1999, Annual Conference Proceedings, Annual Conference Series, pages 171­178, Los Angeles, 1999. ACM Siggraph, Addison Wesley Longman.
+
+[HTSG91] Xiao D. He, Kenneth E. Torrance, Francois X. Sillion, and Donald P. Greenberg. A comprehensive physical model for light reflection. volume 25, pages 175­186, July 1991.
+
+16
+
+[Kau99]
+
+Jan Kautz. Hardware rendering with bidirectional reflectances. Technical Report TR-99-02, Dept. Comp. Sci., U. of Waterloo, 1999.
+
+[KDS02] Jan Katz, Katja Daubert, and Hans-Peter Seidel. User-defined shading models for vr applications. Technical report, Max-Planck Institut Saarbru¨cken, jan 2002.
+
+[Kil00]
+
+Mark J. Kilgard. A practical and robust bump-mapping technique for today's gpus. In GDC 2000: Advanced OpenGL Game Development, July 2000.
+
+[Kil01] Mark J. Kilgard. NVIDIA OpenGL Extension Specifications, 11 2001.
+
+[KM99]
+
+Jan Kautz and Michael D. McCool. Interactive rendering with arbitrary BRDFs using separable approximations. In Dani Lischinski and Greg Ward Larson, editors, Rendering Techniques '99, Eurographics, pages 247­260. Springer-Verlag Wien New York, 1999.
+
+[KS00]
+
+Jan Kautz and Hans-Peter Seidel. Towards interactive bump mapping with anisotropic shift-variant BRDFs. In Stephan N. Spencer, editor, Proceedings of the 2000 SIGGRAPH/EUROGRAPHICS Workshop on Graphics Hardware, pages 51­58, N. Y., August 21­22 2000. ACM Press.
+
+[Kug98]
+
+Anders Kugler. Imem: An intelligent memory for bump- and reflection-mapping. In Stephen N. Spencer, editor, Proceedings of the Eurographics / Siggraph Workshop on Graphics Hardware (EUROGRAPHICS-98), pages 113­122, New York, August 31­September 1 1998. ACM Press.
+
+[LKM01]
+
+Erik Lindholm, Mark J. Kilgard, and Henry Moreton. A user-programmable vertex engine. In Eugene Fiume, editor, SIGGRAPH 2001, Computer Graphics Proceedings, Annual Conference Series, pages 149­158. ACM Press / ACM SIGGRAPH, 2001.
+
+[LMOW95] Anselmo Lastra, Steven Molnar, Marc Olano, and Yulan Wang. Real-time programmable shading. In Pat Hanrahan and Jim Winget, editors, 1995 Symposium on Interactive 3D Graphics, pages 59­66. ACM SIGGRAPH, April 1995. ISBN 0-89791-736-7.
+
+[MAA01]
+
+Michael D. McCool, Jason Ang, and Anis Ahmad. Homomorphic factorization of BRDFs for high-performance rendering. In Eugene Fiume, editor, SIGGRAPH 2001, Computer Graphics Proceedings, Annual Conference Series, pages 185­194. ACM Press / ACM SIGGRAPH, 2001.
+
+[MBGN98] T. McReynolds, D. Blythe, B. Grantham, and S. Nelson. Advanced graphics programming techniques using opengl. SIGGRAPH'98 Course Notes, July 1998.
+
+[MH99]
+
+Michael D. McCool and Wolfgang Heidrich. Texture shaders. In ACM, editor, SIGGRAPH '99. Proceedings 1999 Eurographics/SIGGRAPH workshop on Graphics hardware, Aug. 8­9, 1999, Los Angeles, CA, Computer Graphics, pages 117­126, New York, NY 10036, USA, 1999. ACM Press.
+
+[Moh01]
+
+Abbas Ali Mohamed. Hardware implementation of phong shading using spherical interpolation. Technical report, Budapest University of Technology and Economics, 2001.
+
+[MW01] Chris Maughan and Matthias Wloka. Vertex Shader Introduction. Nvidia Corporation, 2001.
+
+17
+
+[OL98]
+[PAC97]
+[PF90] [Pho75] [SA01] [Sch94] [TS67] [Ups90] [War92]
+
+Marc Olano and Anselmo Lastra. A shading language on graphics hardware: The pixelflow shading system. In Michael Cohen, editor, SIGGRAPH 98 Conference Proceedings, Annual Conference Series, pages 159­168. ACM SIGGRAPH, Addison Wesley, July 1998. ISBN 0-89791-999-8.
+Mark Peercy, John Airey, and Brian Cabral. Efficient bump mapping hardware. In Turner Whitted, editor, SIGGRAPH 97 Conference Proceedings, Annual Conference Series, pages 303­306. ACM SIGGRAPH, Addison Wesley, August 1997. ISBN 0-89791-896-7.
+Pierre Poulin and Alain Fournier. A model for anisotropic reflection. volume 24, pages 273­282, August 1990.
+Bui-Tuong Phong. Illumination for computer generated pictures. CACM June 1975, 18(6):311­317, 1975.
+Mark Segal and Kurt Akeley. The OpenGL graphics system: A specification (version 1.3). Technical report, Silicon Graphics, Inc., Mountain View, CA,USA, April 2001.
+C. Schlick. A survey of shading and reflectance models. Computer Graphics Forum, 13(2):121­131, June 1994.
+K. E. Torrance and E. M. Sparrow. Theory for off-specular reflection from roughened surfaces. Journal of Optical Society of America, 57(9), 1967.
+Steve Upstill. The RenderMan Companion. Addison-Wesley, Reading, MA, USA, 1990.
+Gregory J. Ward. Measuring and modeling anisotropic reflection. volume 26, pages 265­272, July 1992.
+
+18
+
+

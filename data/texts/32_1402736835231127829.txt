@@ -1,0 +1,1093 @@
+Extending the graphic pipeline with new GPU-accelerated primitives
+
+Rodrigo Toledo∗
+
+Bruno Levy†
+
+ISA - INRIA Lorraine
+
+ABSTRACT
+
+Graphics hardware is optimized for rasterizing and solving the vis-
+ibility of points, lines and polygons.
+In this paper, we propose
+a GPU implementation of new graphics primitives (e.g. spheres,
+cylinders, ellipsoids), which are compatible with the standard
+pipeline. Our technique consists of two steps, both executed on
+the GPU:
+
+(1) candidate pixels are pre-selected by rasterizing a standard prim-
+itive whose projection encloses the projection of our primitive;
+
+(2) for each candidate pixel, a fragment program computes the in-
+tersection and lighting, in a ray-tracing way, based on an analytic
+representation of our primitives. In addition, it replaces the Z-buffer
+value of the fragment according to the equation of our primitives.
+
+Our primitives are highly efﬁcient. They are perfectly smooth under
+any arbitrary zoom. They consume much lower bandwidth than
+tesselated primitives (e.g. drawing a sphere only requires to send
+a GL POINT), and they have correct visibility/intersections with
+other primitives (including the standard ones).
+
+Keywords: interactive display, ray-trace, pixel programming, pro-
+grammable graphics hardware, glyph .
+
+1
+
+INTRODUCTION
+
+Until recently, graphics cards were only able to draw polygonal ge-
+ometric primitives, such as textured triangles, solving the visibil-
+ity problem with z-buffer. However, since the ﬁrst generation of
+programmable GPU, new types of primitives can be used. In this
+paper we investigate some novel primitives which use ray-tracing
+as the intra-object visibility solver and keep the z-buffer to solve
+inter-object problem. These primitives are completely compatible
+with the standard pipeline, without requiring any extra-passes or
+pre-deﬁned orders. They are useful for various visualization prob-
+lems, including tensor visualization, molecular visualization and
+high-quality glyphs. Our approach reduces both bandwidth require-
+ment and processing time, resulting in better performance for those
+applications.
+
+Ray tracing on GPU has been approached as an alternative for the
+CPU ray tracing [3, 13, 9], as will be discussed in Section 2. Differ-
+ent from this approach, we propose a GPU ray tracing as an alterna-
+tive for conventional GPU primitives, such as spheres and cylinders.
+The goal is to produce high quality images in a fast way (see Figure
+1), keeping compatibility with the standard graphics cards pipeline.
+The objects being ray-traced can be freely inserted in a scene graph
+with no restrictions, but only the correct pixel and vertex shaders
+(Section 3). The objects using our technique can be some useful
+glyphs or real objects in a scenario, as long as it is possible to use
+
+∗e-mail: toledo@loria.fr
+†e-mail: levy@loria.fr
+
+Figure 1: Tensor of curvature displayed using 5000 ellipsoids, ray-
+traced by the GPU at 25 FPS in a 10242 viewport (using NVidia
+Quadro FX 3000 graphics card). The color represents the maximum
+curvature direction.
+
+conventional shading, as texture applying, with a correct output z-
+value for every pixel.
+
+For each object, we deﬁne a Ray Tracing Area (RTA - Section 4),
+so that a set of pixels run the appropriate algorithm to solve the visi-
+bility and shading of this object. The usual primitives are used only
+to cover the RTA, enabling the pixels where the rays are shot. The
+basic primitives used by the RTA can be, for example, a billboard
+polygon, the counter-clock-wise faces of a polyhedron, or even a
+point (i.e. gl_point) with sufﬁciently large point-size.
+
+The algorithm running inside the pixel shader must be able to han-
+dle the basic ray casting tasks:
+to ﬁnd if there is an intersection
+between an object and a ray; to extract the ﬁrst intersection point;
+computes the normal at this point; and to shade. For each object,
+a different algorithm is speciﬁed (Section 5). Further rays can be
+produced, but, since objects do not know each other, we are able
+to produce only self-shadowing or self-reﬂection effects. Another
+important issue for the pixel shader is the computation of the z-
+value used by the z-buffer. The correct z-value computation is the
+key for achieving a completely natural association with the stan-
+dard graphics primitives. Some basic tasks should be executed in
+the vertex shader, to prepare the maximal information needed by
+the pixel shader, such as ﬁnding the camera and lighting directions.
+
+We present some examples using our method, showing both high
+quality image and speed. The high quality images result from the
+use of a per-pixel ray-tracing instead of tesselated models.
+
+2 PREVIOUS WORKS
+
+With the new programmable GPU, tasks which are different from
+the traditional polygon rendering can explore their parallel pro-
+grammability. The GPU can now be used as a general purpose
+SIMD processor [15], and, following this idea, a lot of existing al-
+gorithms have been recently migrated to the GPU to solve problems
+as Global Illumination [4, 14, 5], Linear Algebra [10], Image Pro-
+cessing [12], and Multigrid solvers [2, 6] in a fast way. The ray
+tracing algorithm has a natural parallelism behavior that have been
+explored more recently in the graphics cards [3, 13, 16, 9]. The
+usual z-buffer algorithm is not used to determine visible surfaces,
+since the ray-tracing is able to discover, for each pixel, which object
+is the one closest to the viewer and also which part of this object is
+ﬁrstly touched by the viewing ray.
+
+In The Ray Engine [3], the ray tracer is limited to render only trian-
+gles. For each one of them, a screen-size quadrilateral is passed to
+the engine, containing in its attributes the triangle description, while
+two textures contain the origin and direction of the rays. Therefore,
+each pixel can test intersection using those informations. The z-test
+is used to maintain the closest parametric distance of each ray if it
+touches any triangle. With some optimizations, almost 200M in-
+tersections computations per second are achieved, even with some
+data transference from the GPU back to the CPU (a very slow op-
+eration in current AGP bus).
+
+In Purcell et al. work [13], the authors show a very interesting way
+to use GPU for ray tracing. They break the algorithm in kernels
+that access the entire scene data which is mapped in textures. Some
+of the kernels need multiple passes, but, at the end, they succeed in
+eliminating the GPU-CPU communication bottleneck.
+
+Krueger et al. [9] developed a volume ray casting using a multi-
+pass approach. The ﬁrst two passes generate the ray information
+that will be used by each pixel. Right after a sequence of passes
+is done, alternating ray-traversal and acceleration steps. They im-
+plemented two types of acceleration tests: empty space skipping
+and threshold opacity achieving. Using the early z-test of their ATI
+graphics card, each ray-traversal pass could be skipped if the accel-
+eration pass (just done) succeeds the test. These accelerations were
+their main goal, producing some good results, although, below their
+own expectations.
+
+Another GPU ray casting work [17] has been developed speciﬁcally
+for tetrahedral meshes. As in Purcell’s work, all the data is coded in
+textures. They have also implemented optimizations for threshold
+opacity achieving and traversal ﬁnishing. Those optimizations are
+done by using an early z-test step for each 14 traversal steps. They
+use an occlusion-query when the early z-test is done to verify when
+all the pixels are totally treated, ending the algorithm.
+
+3 PRINCIPLES OF RAY TRACING PRIMITIVES ON GPU
+
+As described in the beginning of the Section 2, some non-graphical
+algorithms use the GPU just as a SIMD processor. Apart from them,
+ray tracing algorithms should take some advantages of the fact that
+they are producing graphics in a graphics card. A straight forward
+example is the possibility of showing the resulting image immedi-
+ately, for the reason that it is already inside the GPU. A promising
+strategy following this kind of reasoning is to use the z-buffer and
+the ray-tracing in a hybrid way. Purcell et al. [13] implemented a
+hybrid algorithm, where the z-buffer is used to solve visibility and,
+in a second pass, the ray tracing is used for ﬁnding shadows.
+
+We propose a new hybrid ray-tracing and z-buffer algorithm, in
+
+which the visibility of one object is solved by ray-tracing isolated
+from other objects, while the visibility between objects is solved
+by z-buffer. The ray-traced object is drawn inside the Ray Tracing
+Area (RTA) with all the standard shadings (Phong shading, specu-
+lar, texture mapping, etc) also producing a correct z-depth value for
+each pixel. The z-value is computed by the ray tracing algorithm
+and is normally used in the z-test, thus it can be compared to other
+objects already drawn or that will still be drawn in the scene. It is
+important to notice that other objects can be drawn using either the
+conventional pipeline or another RTA, and everything is done with
+one pass only, without any pre-deﬁned order.
+
+3.1 Simple Ray Tracing Overview
+
+In the classical ray tracing algorithms, for each pixel in the screen, a
+ray that contains the camera position and the pixel is shot and tested
+against the objects in the scene. A ray R with the origin o (which
+can be the pixel itself) and normalized direction (cid:126)v (ex: (cid:126)v = pixel -
+camera position) is described in the following parametric function
+
+R :
+
+(x, y, z) = o + t(cid:126)v ,
+
+t ∈ R
+
+The intersection algorithm running for each pixel must answer the
+three basic questions:
+
+• Is there an intersection between the ray and the object?
+• Where the closest intersection is located?
+• What is the surface normal at this point?
+
+For different kinds of objects, different types of intersectors are de-
+signed to answer the questions above. The next step deﬁnes the
+shading on the found point. For this task, an extra information, the
+light direction ((cid:126)l), is very important. It will be used to compute the
+diffuse and specular color values. Finally, further rays can be pro-
+duced to compute reﬂections, refractions and also to determine if
+either the point is in the shadow or not.
+
+So, for each pixel the essential information are: ray’s origin, camera
+direction and light direction. Based on this, the next subsection
+shows how the shaders are used to solve the ray tracing problem.
+
+3.2 Using Vertex and Pixel Shaders for Ray Tracing
+
+The GPU programmability enables the possibility to use small pro-
+grams that are executed in parallel for two different stages of the
+graphics card rendering pipeline: vertex and pixel. Consequently,
+there are now three levels of programming that are executed in the
+following order:
+
+Application
+
+=⇒
+
+Vertex
+
+=⇒
+
+Pixel
+
+CPU
+
+GPU
+
+In order to understand our decision about splitting responsibilities
+between vertex and pixel shaders, two important concepts must be
+clear:
+
+• Any data passed from vertex to pixel shaders have their val-
+ues interpolated by the rasterization GPU stage. For example,
+a pixel inside a triangle receives the values passed by the 3
+vertices using barycentric coordinates to weight them.
+
+• Usually there are much more pixels than vertices when ren-
+dering an object. So, whenever it is possible, we should use
+the vertices instead of the pixels to any process.
+
+by
+
+(cid:179)
+
+Sobj = C
+
+P(object), W
+
+(cid:180)
+
+where
+
+P : R3 (cid:55)→ R2
+
+C(X, W ) = X ∩ W
+
+(projection)
+(clipping)
+
+In our system, the pixel shader (algorithm executed by each pixel)
+is responsible to execute the ray casting over one object. Each dif-
+ferent type of object has its own pixel shader with the appropri-
+ate algorithm. However, there are some common inputs needed by
+those algorithms: the ray origin, the viewing and light directions.
+the vertex shader must pass this information to the pixel shader,
+independently of the ray traced object.
+
+For the ray’s origin information, each vertex only needs to pass the
+vertex position and each pixel has its own position as an input. For
+camera and light directions, the interpolation plays also an impor-
+tant role, discharging us to compute them by pixel. However, if
+these directions are already normalized, they could loose the nor-
+malization, which must be recomputed. But, in the case of a direc-
+tional light or an orthographic projection, the vectors representing
+them are the same for all vertices and the normalization will not be
+lost (interpolation is meaningless).
+
+If the object has a coordinate system different from the world co-
+ordinate system, another important issue to the vertex shader is the
+coordinate transformation from one system to the other. Finally, the
+camera and light directions can either be passed to the vertex shader
+by the application or be obtained from the Opengl state, accessed
+by the shaders.
+
+In the pixel shader, besides of an intersection algorithm, we must
+also compute the z-value that will be used by the z-buffer. This task
+is originally a little bit expensive since, after computing the zeye
+(the z coordinate in eye space) the z-value should be divided by
+the homogeneous coordinate weye and normalized (respecting the
+[0,1] bounds). But we managed to implement it in at most 3 extra
+assembly instructions by pixel.
+
+The following table shows the responsibility distribution:
+
+Vertex
+• ﬁnd camera direction (cid:126)l
+• ﬁnd light direction (cid:126)v
+• [transform coordinate system]
+• Output (cid:126)v, (cid:126)l and position
+
+[ ] = optional
+
+Pixel
+• Find intersection
+• Compute normal
+• Compute diffuse color
+• [Texture mapping]
+• [Specular + ambient]
+• [Ray cast self-shadow]
+• [Further rays]
+• Compute Z-value
+
+Since the computations by pixel can be expensive, we want to re-
+strict the set of pixels to be processed as close as possible to the ﬁnal
+object’s silhouette image. This set of pixels is called Ray Tracing
+Area (RTA) and it is described in the following section.
+
+4 RAY TRACING AREA (RTA)
+
+The choice of a correct RTA for an object is based on three Criteria
+(i), (ii) and (iii) described as following.
+
+The set of pixels in a screen window is deﬁned as
+
+W = { (x, y) | x ∈ [1, width], y ∈ [1, height], x, y ∈ N }
+
+A 3D object drawn in the screen W uses also a set of pixels deﬁned
+
+Each RTA is a subset of W which restricts where the rays are traced
+for a given object. To correctly render an object inside an RTA, Sobj
+must be within the RTA set
+
+Sobj ⊆ RTA ⊆ W
+
+(i)
+
+The RTA is constructed by the union of the areas of projected basic
+primitives. These basic primitives are the usual ones rendered by
+the standard GPU pipeline: points, segments and polygons, with
+(cid:83)
+their coordinates deﬁned in R3.
+i C
+
+P(pi), W
+
+RTA =
+
+(cid:180)
+
+(cid:179)
+
+(ii)
+
+where
+
+pi ∈ {point, segment, polygon}
+
+We also deﬁne two functions that we are interested in minimizing:
+
+(cid:80)
+
+V (RTA) =
+
+i vertices in pi
+
+Waste(RTA, Sobj) =
+
+ARTA−ASobj
+
+ARTA
+
+(vertex cost)
+
+(pixel cost)
+
+where AX = X area = Card(X ) = # of pixels
+
+The function Waste measures the wasting of pixels where the ray-
+tracing algorithm runs but does not result in an intersection with
+the object. The function V counts how many vertices are used to
+construct the RTA.
+
+The third criterion is stated by
+
+minimize (α1Waste(RTA, Sobj) + α2V (RTA))
+
+(iii)
+
+In practice, the collection of the RTA pi primitives are the ones
+which are passed to the graphics pipeline to render. The simplest
+valid RTA would be a square with the same dimension of the screen
+(RTA ≡ W ), as addressed in [3]. The ray trace pixel shader is ex-
+ecuted for each pixel of the rendered primitives, either resulting in
+the correct color when an intersection is found or being discarded.
+The balancing between α1 and α2 of Criterion (iii) reﬂects directly
+in the balancing between vertex and pixel pipelines. As shown later,
+the choice of an RTA with fewer pixel cost (Waste) could result in
+a greater vertex cost (V ) and the choice of the best α1 and α2 is ap-
+plication dependent, and can be adapted for unloading the pipeline
+where a bottle-neck is identiﬁed.
+
+The following subsections classify some kind of primitives used to
+construct the RTA:
+
+• Polyhedron faces
+• Polygons
+
+– World polygons
+– Billboard polygons
+
+• Points and Segments
+
+4.1 Polyhedron RTA
+
+4.3 Point and Segment RTA
+
+The faces of an object bounding volume are good candidates for
+constructing an RTA. The simplest example is the bounding box
+(RTABbox) which has 8 as its vertex cost (V (RTABbox) = 8).
+However, for some kind of objects, simple bounding box results in
+a high pixel cost (Waste function), if the parallelepiped does not
+properly wrap the object (Figure 2(a)). In the case where the bottle-
+neck of the application is in the pixel pipeline, other polyhedrons
+that ﬁts better can be proposed (Figure 2(b)) even if it increases the
+vertex cost. On the other hand, if the object rendered is repeated
+many times in the application scene, maybe a high vertex cost might
+impact the vertex pipeline, this suggests to increase the α2 term in
+the minimization Criterion (iii).
+
+The point primitive implemented in the graphics card actually be-
+haves more than just a point, given that its property size can be
+customized. Indeed, the form of the point is a square with scal-
+able side size. We are interested in the use of points as squares,
+scaling their size to much larger than a point. The idea of using
+a large point is an extension of the use of a billboard as explained
+in Section 4.2. The RTApoint has the lowest possible vertex cost,
+V (RTApoint ) = 1. We have also the convenient to have no extra
+effort in keeping the billboard screen faced (it works as a gratuitous
+billboard), with only a simple extra task: establish the point size.
+A very interesting object to ray trace by using the Point RTA is the
+sphere.
+
+Following the same idea, one segment with a scalable width can be
+used as a basic primitive as well. In practice, it works as a free-
+oriented rectangle over the screen. It has also a very small vertex
+cost V (RTAsegment ) = 2, and it is a very good RTA to draw cylin-
+ders.
+
+(a)
+
+(b)
+
+Figure 2: (a) A bounding box RTA used to ray-trace the object. (b) A
+more complex polyhedron well ﬁtting the object.
+
+It is important to notice that there is no need to render all the poly-
+hedron faces, but just the counter-clock-wise ones after projection
+(or the clock-wise ones). If all of them are used, it doubles the com-
+putations, since, for each pixel, two fragments are produced, calling
+the pixel shader twice to solve the same intersection.
+
+4.2 Polygon RTA
+
+Another valid RTA is formed by only one planar polygon. In this
+case, the interior of the polygon works as a window, thorough which
+it is possible to see the ray traced object. There are two different
+strategies to use the polygon RTA: as a real-world object or as a
+billboard.
+
+Polygons with ﬁxed world coordinates This kind of RTA
+is useful if we want to use a window in the scenario showing our
+primitive. If the chosen polygon is a rectangle (probably the most
+common choice), then the vertex cost is 4 (V (RTArect ) = 4). The
+biggest restriction of the polygons RTA is the impossibility of a
+proﬁle viewing. In the case that the lateral viewing is imperative,
+we have to switch to use a polyhedron RTA (Section 4.1).
+
+Billboard Polygon Different from the world ﬁxed polygons,
+the RTA formed by billboard has a ﬁxed orientation with respect to
+the camera, therefore it always keeps its face perpendicular to the
+viewing direction. The vertices have an extra task to keep track the
+orientation of the polygon. The Waste function is constant when
+the ray traced object has a constant Sobj. Another interesting ad-
+vantage of the billboard is the simpliﬁcation of the ray tracing if the
+eye coordinate system is the one used to trace the ray. In this case,
+we can explore the fact that the ray traverses using the z direction
+only (once it is perpendicular to the x and y screen directions).
+
+Figure 3: Molecule ATP-Ase with 17000 atoms rendered at 30 FPS,
+using only GL POINTS (see Table 2).
+
+5 RAY TRACED OBJECTS
+
+We concentrated our efforts speciﬁcally on quadrics, which are de-
+scribed in this section. We start from showing the sphere imple-
+mentation (treated as a special case), and then we generalize to all
+quadrics.
+
+5.1 Sphere
+
+We tested two different classes of RTA to ray trace spheres: poly-
+hedron RTA and billboard RTA. For the polyhedron RTA, we use
+both a cube and an icosahedron to perform some tests. We decide
+to use the RTApoint as our billboard, since it radically decreases the
+vertex cost compared to the polyhedron RTA. The table 1 shows a
+comparison between the different RTA:
+
+The sphere is always perfectly enclosed in each polyhedron and in
+the square resulted by the RTApoint .
+
+RTA
+
+VRTA
+
+min Waste
+
+max FPS
+
+max Waste
+
+min FPS
+
+Cube
+
+Icosahedron
+
+Point
+
+8
+
+21.5%
+
+295
+
+39.6%
+
+190
+
+12
+
+13.3%
+
+318
+
+19.4%
+
+297
+
+1
+
+21.5%
+
+295
+
+21.5%
+
+295
+
+Table 1: Results for different RTA used for spheres (see Figure 4).
+To compute these values we use ASobj = πr2 as the projection of
+a sphere with radius r. The minimal and maximal Point Waste and
+the minimal Cube Waste are computed using the square enclosing
+it (Asquare = 4r2). The hexagonal projection area of a Cube is
+used for the maximal Waste computation. Finally, the Icosahedron
+Waste were computed by experimentation.
+In our measuring, we
+use a sphere, whose projection has 400 pixels diameter, centered in
+a 10242 viewport in a NVidia Quadro FX 3000.
+
+Figure 4: Different RTA used for spheres: cube, icosahedron and a
+scalable point.
+
+When in a polyhedron, the sphere works in a coordinate system
+different from the world coordinate system (the vertex shader is
+responsible for transforming coordinates). So, in its own system,
+the sphere is zero centered with unit radius. In this context, our
+goal is to compute the intersection between a ray R and a sphere S
+given by
+
+R :
+
+(x, y, z) = o + t(cid:126)v
+
+S :
+
+x2 + y2 + z2 = 1
+
+(1)
+
+(2)
+
+where (o, (cid:126)v) denote the origin and direction of the current ray. Since
+(cid:126)v is normalized, solving for t yields
+
+t2 + 2((cid:126)o · (cid:126)v)t + ((cid:126)o · (cid:126)o) − 1 = 0
+
+(3)
+where (cid:126)o = o − (0, 0, 0) denotes the vector connecting the world’s
+origin to the ray’s origin. The only computations required to ﬁnd t
+are
+
+b = ((cid:126)o · (cid:126)v)
+∆ = 4(b2 − ((cid:126)o · (cid:126)o)) + 4
+t = −b −
+
+√
+∆
+2
+
+If ∆ < 0, there is no intersection and the pixel is discarded. In the
+√
+case there is an intersection, we are only interested in the ﬁrst one,
+we do not need to consider −b +
+∆/2. The intersection point
+can then be easily computed by o + t(cid:126)v and its value is exactly the
+normalized normal, for the reason that the sphere is zero-centered
+with unit radius.
+
+Using the powerful GPU assembly instructions, as DP3 (Dot Prod-
+uct between 3D vectors) and MAD (Multiply and Add over 1 to 4
+ﬂoats at once), we solve the sphere intersection and shading with
+only 11 instructions. The vectors v and l are the normalized repre-
+sentations of the viewing and light directions, while o is the origin
+of the ray.
+
+DP3 oo, o, o;
+DP3 ov, o, v;
+MAD delta, ov, ov, -oo;
+MAD delta, delta, 4, 4;
+KIL delta;
+RSQ delta, delta;
+RCP delta, delta;
+MAD t, delta, -0.5, -ov; #find t of intersection
+#normal=inters= o + t*v
+MAD normal, t, v, o;
+DP3 diffuse, normal, l;
+#diffuse = dot(normal,l)
+MUL out, diffuse, color; #SHADE without specular
+
+#delta
+#discard if delta < 0
+
+#oo = dot (o,o)
+#ov = dot (o,v)
+
+#sqrt(delta)
+
+Actually, for a shading with specular and ambient, 4 more instruc-
+tions are needed, and for a correct z-buffer value output, 3 more
+instructions are required (totalizing 18 assembly instructions).
+
+Instead of using an algebraic solution, Haines [7] proposed another
+way to ﬁnd intersection using a geometric approach for spheres.
+The main advantage pointed by him is the possibility to decide ear-
+lier the discarding of a pixel. However, the pixel program always
+executes to the end, even when a discard instruction (KIL) appears,
+so no optimization occurs with early-discarding.
+
+We are able to draw a sphere with a diameter of 1024 pixels, in-
+scribed in a viewport of 10242 at 65 FPS, using the cube as the RTA,
+all the 1M pixels are running the sphere intersection algorithm (see
+Figure 5). Smaller spheres increase the rate. For instance, a sphere
+with diameter of 512 pixels inside the same viewport (10242) is
+rendered at 220 FPS.
+
+(a)
+
+(b)
+
+Figure 5: (a) A RTAcube is used to draw a sphere. (b) We achieve
+65 FPS for drawing a sphere inscribed in a 10242 viewport.
+
+Sphere in RTApoint An even more efﬁcient RTA for
+spheres is the GL POINT, which actually covers a square on the
+screen. The size of this square can be speciﬁed either using
+GL POINT SIZE or changing the vertex’s point size in the vertex
+shader (by enabling GL VERTEX FONT SIZE ARB). Drastic op-
+timizations can be made in the case of orthographic projections.
+All computations reduce to 2D operations in screen-space (includ-
+ing the update of the z-value), Figure 3 uses this optimization. This
+approach is also useful for drawing glyphs (i.e symbols of zoom-
+independent sizes) with correct z-buffer, as shown in our video.
+
+102410245.2 Quadrics
+
+Quadrics are second-degree implicit functions, and the following
+equation represents its surface:
+
+(a)
+
+(b)
+
+f (x, y, z) = Ax2 + 2Bxy + 2Cxz + 2Dx + Ey2 +
+
+2F yz + 2Gy + Hz2 + 2Iz + J = 0
+
+(4)
+The 10 coefﬁcients can be disposed in a 4× 4 symmetric matrix Q,
+and the Equation 4 can be rewritten as
+
+(cid:105) A B C D
+
+B E F G
+C F H I
+D G I
+J
+
+
+
+ x
+
+y
+z
+1
+
+ = 0
+
+(cid:104)
+
+x y
+
+z
+
+1
+
+Substituting Equation (1) into (4), the intersection of a ray and a
+Quadric is obtained by
+
+V QV t2 + 2 OQV t + OQO = 0
+
+(5)
+
+where
+
+V is the vector: [(cid:126)vx, (cid:126)vy, (cid:126)vz, 0]
+O is the vector: [ox, oy, oz, 1]
+
+and
+
+(c)
+
+(d)
+
+The intersection (P ) and the normal (N) are computed by
+
+(cid:183)
+
+(cid:184)
+
+P = o + tv
+
+N =
+
+∂f
+∂x
+
+,
+
+∂f
+∂y
+
+,
+
+∂f
+∂z
+
+(cid:48)
+
+P
+
+= Q
+
+Figure 6: Some quadrics rendered in a RTAcube.
+(a,b) Simple
+quadrics rendered at 96 FPS in a 5122 viewport. (c) Four quadrics
+union, forming one object.
+(See
+Table 2 for more details.)
+
+(d) Example of textured quadric.
+
+where Q(cid:48) is the [3 × 3] upper-left submatrix extracted from Q.
+In the following lines, we present a piece of code to ﬁnd the two
+intersections of a quadric and the normal at the closest one, using
+the CG language [11], with instructions to solve matrix-vector mul-
+tiplication and vectors dot product. (Note: since b is even, we use a
+reduced quadratic equation.)
+
+a = dot (v, mul(Q,v));
+b = dot (o, mul(Q,v));
+c = dot (o, mul(Q,o));
+delta = b*b - a*c;
+if (delta<0)
+delta = sqrt(delta);
+t1 = ( -b - delta ) / a;
+t2 = ( -b + delta ) / a;
+t = (t1<t2) ? t1 : t2;
+intersection = o + t*v;
+normal = normalize(mul(Q,intersection));
+
+discard;
+
+In assembly, the ﬁnal code took 45 instructions. Using a RTAcube
+in a 5122 window we achieved 90 FPS and 25 FPS in 10242. Some
+of the resulting images are presented in Figure 6. (For more about
+quadrics and their ray intersections see [7, 1, 8].)
+
+• We gain in unloading the vertex pipeline, and reducing the
+bandwidth needed, since we can use simple primitives with-
+out too many vertex (like the faces of a cube) to visualize more
+complex objects (commonly tesselated). A sphere is drawn
+using only twelve (icosahedron), eight (cube) or even one
+vertex (point), instead of triangulated representations (usually
+with hundreds or thousands of triangles).
+
+• We can have more precision in the representation, as com-
+pared to tesselated models. This qualitative enhancement is
+observed in three different situations: (1) the objects silhou-
+ettes are perfectly smooth even after a huge zoom; (2) when
+objects intersect each other they can achieve an accurate visi-
+bility decision, once the z-value is computed by pixel instead
+of being interpolated by vertex; (3) per pixel shading outputs
+precise colors, respecting diffuse and specular computations.
+• Transferring process from vertex to pixel makes the objects
+being represented have a natural LOD and frustum clipping.
+When objects are far from the viewer, they use fewer pixels,
+resulting in less processing. They can also take advantage
+from systems with multiple graphics cards, once they are out
+of the frustum there are no pixel processing.
+
+6 CONCLUSION
+
+The limitation are:
+
+In this paper, we present the feasibility of using per-pixel computa-
+tions instead of systematically tessellating primitives. As we have
+shown, good performances can be achieved for spheres, ellipsoids
+and more general quadrics. These primitives are perfectly compat-
+ible with the standard graphic pipeline and can be drawn in any
+order, mixed with classic primitives with correct z-buffer visibility.
+
+We list some advantages of using ray tracing primitives in GPU:
+
+• Our method is not a real ray-tracing, since objects are treated
+separately from each other. As a consequence, inter-object
+shadows or reﬂections cannot be directly handled.
+
+• The silhouettes could be improved by implementing antialias-
+ing (using supersampling and alpha blending). However, this
+could not be done in an order-independent way (as with stan-
+dard OpenGL antialiased lines and polygons).
+
+7 FUTURE WORK
+
+We would like to extend our work to more general primitives (e.g.
+cubics, subdivision surfaces, etc), see Figure 7. The next generation
+of GPU will offer powerful functionalities (texture fetch in vertex
+programs, looping in pixel programs) that will facilitate this task in
+a great deal.
+
+Figure 7: In future work we will render others functions as cubics, our
+preliminaries results achieved 12 FPS.
+
+ACKNOWLEDGEMENT
+
+Acknowledgement will be given in the ﬁnal version.
+
+REFERENCES
+
+[1] Jim Blinn.
+
+In Introduction to Implicit Surfaces, chapter The alge-
+braic properties of second-order surfaces, pages 52–97. Ed. Morgan-
+Kaufmann, 1997.
+
+[2] Jeff Bolz, Ian Farmer, Eitan Grinspun, and Peter Schroder. Sparse
+matrix solvers on the gpu: conjugate gradients and multigrid. ACM
+Trans. Graph., 22(3):917–924, 2003.
+
+[3] Nathan A. Carr, Jesse D. Hall, and John C. Hart. The ray engine. In
+Proceedings of the ACM SIGGRAPH/EUROGRAPHICS conference
+on Graphics hardware, pages 37–46. Eurographics Association, 2002.
+[4] Nathan A. Carr, Jesse D. Hall, and John C. Hart. Gpu algorithms for
+radiosity and subsurface scattering. In Proceedings of the ACM SIG-
+GRAPH/EUROGRAPHICS conference on Graphics hardware, pages
+51–59. Eurographics Association, 2003.
+
+[5] Greg Coombe, Mark J. Harris, and Anselmo Lastra. Radiosity on
+graphics hardware. In Graphics Interface (to appeared). CIPS, Cana-
+dian Human-Computer Commnication Society, 2004.
+
+[6] Nolan Goodnight, Cliff Woolley, Gregory Lewin, David Luebke,
+and Greg Humphreys. A multigrid solver for boundary value prob-
+lems using programmable graphics hardware. In Proceedings of the
+ACM SIGGRAPH/EUROGRAPHICS conference on Graphics hard-
+ware, pages 102–111. Eurographics Association, 2003.
+
+[7] Eric Haines. An introduction to ray tracing, chapter Essential ray
+
+tracing algorithms, pages 33–77. Academic Press Ltd., 1989.
+
+[8] Pat Hanrahan. An introduction to ray tracing, chapter A Survey of
+Ray - Surface Intersection Algorithms, pages 33–77. Academic Press
+Ltd., 1989.
+
+[9] Jens Krueger and Ruediger Westermann. Acceleration techniques
+for gpu-based volume rendering. In Proceedings IEEE Visualization
+2003, 2003.
+
+[10] Jens Krueger and Ruediger Westermann. Linear algebra operators for
+gpu implementation of numerical algorithms. ACM Transactions on
+Graphics (TOG), 22(3):908–916, 2003.
+
+[11] William R. Mark, R. Steven Glanville, Kurt Akeley, and Mark J. Kil-
+gard. Cg: a system for programming graphics hardware in a c-like
+language. ACM Trans. Graph., 22(3):896–907, 2003.
+
+[12] Kenneth Moreland and Edward Angel. The fft on a gpu.
+
+In Pro-
+ceedings of the ACM SIGGRAPH/EUROGRAPHICS conference on
+Graphics hardware, pages 112–119. Eurographics Association, 2003.
+[13] Timothy J. Purcell, Ian Buck, William R. Mark, and Pat Hanrahan.
+Ray tracing on programmable graphics hardware. ACM Transactions
+on Graphics, 21(3):703–712, July 2002. ISSN 0730-0301 (Proceed-
+ings of ACM SIGGRAPH 2002).
+
+[14] Timothy J. Purcell, Craig Donner, Mike Cammarano, Hen-
+Photon mapping on pro-
+rik Wann Jensen, and Pat Hanrahan.
+grammable graphics hardware.
+In Proceedings of the ACM SIG-
+GRAPH/EUROGRAPHICS Conference on Graphics Hardware, pages
+41–50. Eurographics Association, 2003.
+
+[15] Suresh Venkatasubramanian. The graphics card as a stream computer.
+In SIGMOD-DIMACS Workshop on Management and Processing of
+Data Streams, 2003.
+
+[16] Ingo Wald, Timothy J. Purcell, Joerg Schmittler, Carsten Benthin, and
+Philipp Slusallek. Realtime Ray Tracing and its use for Interactive
+Global Illumination. In Eurographics State of the Art Reports, 2003.
+[17] Manfred Weiler, Martin Kraus, Markus Merz, and Thomas Ertl.
+Hardware-Based Ray Casting for Tetrahedral Meshes. In Procceed-
+ings of IEEE Visualization ’03, pages 333–340. IEEE, 2003.
+
+Figure 8: Self-shadowing over quadrics.
+
+Figure 9: 6,500 ellipsoids showing the tensor of curvature of a hand
+model.
+
+Object
+
+Figure
+
+Viewport
+
+RTA
+
+VRTA
+
+min FPS max FPS
+
+5000 ellipsoids
+5000 ellipsoids
+5056 balls
+5056 balls
+5056 balls
+5056 balls
+Molecules
+Molecules
+Cones
+Cones
+Simple Quadrics
+Simple Quadrics
+Star
+Star
+
+Figure 1
+Figure 1
+Figure 10
+Figure 10
+Figure 10
+Figure 10
+Figure 3
+Figure 3
+Figure 2(a)
+Figure 2(b)
+Figure 6(a)(b)
+Figure 6(a)(b)
+Figure 6(c)
+Figure 6(c)
+
+1024
+512
+1024
+512
+256
+512
+1024
+512
+1024
+1024
+1024∗
+512∗
+512
+1024
+
+Bounding Box
+Bounding Box
+
+Cube
+Cube
+Cube
+
+Icosahedron
+
+Point
+Point
+Cube
+
+Adapted
+
+Cube
+Cube
+
+4 Bounding Boxes
+4 Bounding Boxes
+
+5000 * 8
+5000 * 8
+5056 * 8
+5056 * 8
+5056 * 8
+5056 * 12
+
+17000
+17000
+
+8
+12
+8
+8
+32
+32
+
+22
+42
+12
+22
+38
+36
+13
+29
+26
+26
+26
+92
+62
+23
+
+26
+47
+16
+47
+71
+47
+13
+29
+60
+101
+26
+92
+88
+58
+
+Table 2: Results for different models. All tests were done using NVidia Quadro FX 3000 graphics card in our AMD Athlon, 1.73 GHz, 1G RAM.
+(∗) The RTA fulﬁll the viewport.
+
+Figure 10: In a 5122 screen, 5,056 ray-traced spheres rendered at 45 FPS (tail in detail after zooming).
+
+Figure 11: Morphing between different quadrics executed in real time (110 FPS).
+
+

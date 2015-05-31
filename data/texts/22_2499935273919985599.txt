@@ -1,0 +1,1241 @@
+Exploiting the Shader Model 4.0 Architecture
+
+Suryakant Patidar∗
+
+Shiben Bhattacharjee†
+
+Jag Mohan Singh‡
+
+P. J. Narayanan§
+
+Center for Visual Information Technology, IIIT Hyderabad
+
+Figure 1: Physics of balls with Transform Feedback. Multi Light Shadows with Layered Rendering. Teapot rendered with spline subdivision.
+Geometry generation with Geometry Shader.
+
+Abstract
+
+The Direct3D10/SM4.0 system [Blythe 2006] is the 4th genera-
+tion programmable graphics processing units (GPUs) architecture.
+The new pipeline introduces signiﬁcant additions and changes to
+prior generation pipeline. We explore these new features and ex-
+periment to judge their performance. The main facilities introduced
+that we ponder upon are, Uniﬁed Architecture providing common
+features set for all programmable stages, Geometry Shader which is
+a new programmable stage capable of generating additional primi-
+tives, Stream output with which primitive data can be streamed to
+memory, Array textures and primitive level redirection to different
+frame buffers through layered rendering. We analyze our imple-
+mentations and with experimentation, we draw conclusions on their
+efﬁcient usage and provide some of their limitations.
+
+Keywords:
+grammable Graphics Hardware
+
+Shader Model 4.0, Direct3D 10 System, Pro-
+
+1 Introduction
+
+In real-time 3D computer graphics, a rendering pipeline is meant
+to accept certain representation of a 3D scene as input and pro-
+duce a 2D raster image as output which can be shown on a dis-
+play device. The various pipeline stages are mentioned in Figure 2.
+Earlier, these stages were implemented as ﬁxed functions on hard-
+ware for graphics acceleration. Later, some of these stages were
+made programmable instead of being ﬁxed function namely pro-
+cessing of vertices and fragment. Since all vertices and fragments
+
+∗e-mail:skp@research.iiit.ac.in
+†e-mail:shiben@research.iiit.ac.in
+‡email:jagmohan@research.iiit.ac.in
+§e-mail:pjn@iiit.ac.in
+
+can be thought of as independent, they can be processed parallely
+on the graphics processing unit. Small programs could be writ-
+ten which processed all vertices (or fragments) parallely and were
+called shaders and the programming model was called the shader
+model. The history of graphics hardware and shader model is dis-
+cussed in Section 1.1.
+
+The Shader Model 4.0 makes giant leaps considering a version
+change, as it involves signiﬁcant changes to the rendering ure-
+pipeline. Earlier vertex shaders and fragment shader, being at dif-
+ferent stages, had different requirements. Fragments shaders had
+quick access to textures and vertex shaders either didn’t have or had
+limited access to textures. Shader Model 4.0 keeps all the shaders
+at the same level calling it a uniﬁed architecture, because of which
+even vertex shader (and geometry shader) have fast access to tex-
+tures. This feature can be used to draw objects whose geometry
+information is stored as images, a very good example being terrain
+rendering in which elevation map is stored as images. We discuss
+usage of uniﬁed architecture in Section 2.
+
+The new model introduces a new programmable stage called the
+geometry shader which gives the capability of generating more ver-
+tices and primitives. This saves the CPU to GPU bandwidth as less
+3D data can be sent using programming tricks to the pipeline and
+they can be generated on the GPU itself. We stress test the capa-
+bilities and verify the importance of this new programmable stage
+(Section 3). We develop techniques and applications involving ge-
+ometry shader and our analysis will be helpful in clever usage of
+geometry shader.
+
+In past, game developers complained about slow state change be-
+cause of which they avoided using multiple textures. Instead they
+mapped textures on various objects with the help of a single texture,
+texture atlas [Nvidia 2004]. Shader Model 4.0 introduces array tex-
+tures and 3D textures. Various images can be loaded as layers in ar-
+ray texture (or as a 3D texture) and the shader can choose between
+these layers as the whole array texture is referenced by a single tex-
+ture ID. Terrain rendering ﬁnds itself as a good application of array
+textures which we explain in detail in Section 4.
+
+Along with the introduction of array textures, another new attrac-
+tive feature is layered rendering which seems an extension of older
+model’s one of the feature, MRT (Multiple Rendering Targets).
+Where with MRT, fragments in the fragment shader can be redi-
+
+6. Stream Output : This new mode to the graphics pipeline
+records vertex attributed of the primitives processed in the ge-
+ometry shader or post vertex shader in case of ﬁxed pipeline
+or absence of geometry shader (Section 6).
+
+1.1 Programmable GPUs : A Brief History
+
+In history, 3D graphics goes as early as the days of Evans & Suther-
+land, founded by Ivan Sutherland and David Evans in 1968. Some
+of their work involves projects for military and large industrial ﬁrms
+for training and simulation, digital projection environments like
+planetariums etc. SGI was founded by one of the students of Ivan
+Sutherland, Jim Clark and Abbey Silverstone in 1981. In 1982, one
+of the ﬁrst products from SGI include IRIS 1000 (Integrated Raster
+Imaging System). SGI also came up with an API, ’IRIS Graphics
+Language’ (IRIS GL), which provided access to their high perfor-
+mance 3D graphics subsystems. Later, IRIS GL became OpenGL
+which meant for the ﬁrst time, fast, efﬁcient, cross-platform graph-
+ics programs could be written.
+
+Commodity based graphics hardware involving 3D functions were
+ﬁrst developed by Matrox, Creative, S3 and ATI in 1995. Graphics
+hardware production for consumer PC market grew with the intro-
+duction of Voodoo Graphics PCI by 3Dfx in 1996. 3dfx also pro-
+vided a graphics API called GLIDE for their VooDoo cards, which
+was kept at a much lower level to the hardware. This was difﬁcult
+for game programmers but they were able to harness the full power
+of voodoo cards. The ﬁrst voodoo card was capable of only ras-
+terization and pixel processing. Later NVIDIA developed the ﬁrst
+card named GeForce 256 (SDR) in Oct 1999. This card was capa-
+ble of ﬁxed function hardware based transformation of vertices and
+lighting with the Direct3D7 and OpenGL1.2 API.
+
+The GeForce 3, was the ﬁrst programmable GPU, allowing game
+developers to do much more (2001). This breakthrough came as Di-
+rect3D8 introduced the ﬁrst widely-used family of shaders: Shader
+Model 1.1. ATI came up with Radeon 8500 supporting Shader
+Model 1.4. The shader model at this stage involved a few of assem-
+bly intructions in the shader programs. Also branching and looping
+were not supported at all. The next version, Shader Model 2.0 (Di-
+rect3D9), involved improvement in terms of shader code length.
+GeForceFX series and Radeon 9700 brought it to the consumers in
+2003.
+
+In 2005, we had the GeForce 6 and 7 series, which support Di-
+rect3D9c and Shader Model 3.0. X800 supported Direct3D9c but
+only Shader Model 2.0b. Shader Model 3.0 also saw the dawn of
+high level shading languages. Direct3D9c named its shading lan-
+guage HLSL and OpenGL2.0 called it GLSL1.1. Shader Model
+3.0 contained several improvements: improved ﬂoating point pre-
+cision, more code length, support of dynamic branching but with a
+performance hit, unrolled looping and vertex texture lookup. Due to
+such enhancements, Shader Model 3.0 remained the most used by
+game developers, graphics researchers and GPGPU programmers.
+NVIDIA released its own shading language Cg in 2003, which was
+closer to HLSL, and was apparently used widely.
+
+By the end of year 2006, NVIDIA released the ﬁrst card, 8800GTX,
+of their G80 family. This supported Shader Model 4.0 introduced
+by Direct3D10 System. OpenGL 2.1 with GLSL1.20 got intro-
+duced in November 2006 which fully supported the new features
+of Shader Model 4.0. AMD is expected to release its R600 series
+card, Radeon 2900XT, in May 2007. The improvements in Shader
+Model 4.0 are signiﬁcant and tend to solve most issues game devel-
+opers raise.
+
+CU DAT M (Compute Uniﬁed Device Architecture) which is a fun-
+damentally new computing architecture, provides an access to the
+
+Figure 2: Traditional rendering pipeline
+
+rected to different color attachments of the frame buffer; with lay-
+ered rendering, it is possible in the geometry shader to redirect
+primitives to different layers of an array texture which are attached
+to the frame buffer object. Independent rasterization for all the dif-
+ferent layers will be carried out. We ﬁnd that multi-perspective
+rendering and multiple light shadows are good applications of lay-
+ered rendering and are discussed in Section 5. Real-time Cube-map
+rendering is good application which has been discussed in [Blythe
+2006].
+
+The new rendering pipeline also features streaming data out in the
+middle of the pipeline to the memory. This is termed as stream
+output by the Direct3D 10 system and transform feedback by the
+OpenGL 2.1 system. This gives the facility of not going through
+the whole pipeline to process stream data which is not to be ren-
+dered. Objects can be rendered as well as some information can
+be recorded in the same pipeline. We implemented simple physics
+transformations and deformable models which harnesses the trans-
+form feedback’s facilities; they are described in Section 6.
+
+A small overview of the features which came along with shader
+model 4.0 as enumerated below:
+
+1. Uniﬁed Architecture : A single point computation unit which
+is responsible for the variety of computations going on the
+GPU (Section 2).
+
+2. Integer Operations : Integer (arithmetic, bitwise and conver-
+
+sion) instructions (32-bit) are now supported.
+
+3. Goemetry Shader : A new shader unit in the pipeline which
+takes a primitive (point, line or triangle) as input and produces
+zero or more primitives (Section 3).
+
+4. Array Textures : This feature of Shader Model 4.0 brings
+along two new texture storage units namely one- and two-
+dimensional array textures which essentially mean a collec-
+tion of one- and two-dimensional textures (Section 4).
+
+5. Layered Rendering : With the introduction of Geometry
+Shader user can render to one of several different layers of
+cube map textures, three-dimensional textures, plus one- and
+two-dimensional texture arrays (Section 5).
+
+Figure 3: The Uniﬁed Architecture
+
+tremendous processing power of NVIDIA GPUs through a revolu-
+tionary new programming interface. The core technology of GPUs
+which is parallel data processing is now exploited with GPUs en-
+tering the space of massively parallel processing. The GPUs now
+act as a co-processor to the CPU, ofﬂoading major part of process-
+ing.
+
+2 Uniﬁed Shader Architecture
+
+The Shader Model 4.0 GPUs use the same processor core to imple-
+ment vertex, geometry and fragment processing. Seperate proces-
+sors with different capabilities were used for different stages of the
+earlier GPUs. The previous model with seperate processors for ver-
+tex and pixel units (Figure 4) was prone to under-performance. The
+Shader Model 4.0 GPUs dynamically allocate the available process-
+ing resources to vertex, geometry and pixel units as demanded by
+the load. This greatly improves the resource utilization.
+
+The main advantages of Uniﬁed Architecture are
+
+1. Dynamic load balancing due to the on-demand scheduling of
+
+processes
+
+2. Higher power to vertex processor with introduction of full
+
+ﬂoating point precision
+
+3. High performance due to uniﬁed compute and texture access.
+
+An important advantage of uniﬁed architecture is uniform access to
+the texture memory for all shaders. The vertex textures supported
+on Shader Model 3.0 were slow [Asirvatham and Hoppe 2005]. ATI
+cards never supported vertex textures. This allows the use of tex-
+tures to store regular geometry and their access in vertex and geom-
+etry shaders. We compare rendering a grid of 1000 × 1000 points
+using vertex texture to fetch the vertices. The FPS on a Nvidia
+6600 GT was 14, and on a Nvidia 7950GX2 was 32 fps. In contrast
+GeForce 8800 GTX gave an 270 fps. This together with geometry
+generation on the Geommetry Shader (Section 3.1) makes it pos-
+sible to render huge geometry completely on the shaders. Some
+of the applications which can take direct advantage of the above
+scenario are rendering of Geometry Images and rendering of huge
+terrains with dynamic LOD. Thus, uniﬁed shaders allow us to store
+geometry in form of textures and efﬁciently access the same from
+vertex shader.
+
+These features make it possible for the whole geometry to be stored
+in and rendered from the the GPU memory. This can increase the
+rendering speed especially if the geometry is quite regular. Terrains
+are good examples of such geometry when represented using regu-
+lar heightmaps. The 2D array of heights can be stored in textures
+on the GPU and accessed by the shaders quickly for rendering.
+
+Figure 4: Inefﬁcient usage of hardware with previous architecture.
+Schematic representation of dynamic load balancing with Uniﬁed
+Architecture
+
+Figure 5: Rendering Geometry Images with vertex textures
+
+Gu et al introduced Geometry Images [Gu et al. 2002] which cap-
+tures geometry as a simple 2D array of quantized points. As op-
+posed to remeshing an irregular mesh into one with a semi-regular
+connectivity, they proposed a technique to remesh an arbitrary sur-
+face onto a completely regular structure called a geometry image.
+With the introduction of faster (common to vertex, geometry and
+fragment shader) texture fetch in the shaders a geometry image can
+be rendered with high efﬁciency. For a geometry image of Bunny
+with 257 × 257 vertices the fps obtained on a Nvidia 7950GX2 was
+713 as compared to that on 8800 GTX was 2281 (Figure 5).
+
+Code Snippet from GLSL geometry shader for Geometry Image
+rendering.
+
+...
+
+// pos *= 5.0 corresponds to the scaling
+// factor as normalized vertices are stored in
+// the Geometry Image.
+
+// tex is the texture holding the geometry
+// image.
+
+pos.xyz = texture2DRect( tex, texcoord.xy ).rgb;
+pos.xyz *= 5.0;
+pos.w = 1.0;
+gl_Position = gl_ModelViewProjectionMatrix * pos;
+EmitVertex();
+
+texcoord.x += 1.0;
+pos.xyz = texture2DRect( tex, texcoord.xy ).rgb;
+pos.xyz *= 5.0;
+pos.w = 1.0;
+gl_Position = gl_ModelViewProjectionMatrix * pos;
+EmitVertex();
+
+texcoord.x -= 1.0;
+texcoord.y += 1.0;
+
+pos.xyz = texture2DRect( tex, texcoord.xy ).rgb;
+pos.xyz *= 5.0;
+pos.w = 1.0;
+gl_Position = gl_ModelViewProjectionMatrix * pos;
+EmitVertex();
+
+texcoord.x += 1.0;
+pos.xyz = texture2DRect( tex, texcoord.xy ).rgb;
+pos.xyz *= 5.0;
+pos.w = 1.0;
+gl_Position = gl_ModelViewProjectionMatrix * pos;
+EmitVertex();
+
+EndPrimitive();
+...
+
+The above code corresponds to expansion of a point from geometry
+image into a 2 × 2 grid of triangle to build the mesh.
+
+Following 3 tables show the FPS numbers under various conditions.
+
+1
+
+2
+
+3
+
+4
+
+Geometry being sent from CPU in form of Points
+
+Geometry being sent from CPU in form of Triangles ( TRIANGLE STRIP)
+
+Dummy Indices stored in VBO, expanded in shader and heights fetched from vertex texture(LUMINANCE)
+
+Dummy Indices stored in VBO, expanded as triangles in Geometry Shader and heights fetched from texture
+
+Grid Size
+256 × 256
+512 × 512
+
+1024 × 1024
+2048 × 2048
+
+Grid Size
+256 × 256
+512 × 512
+
+1024 × 1024
+2048 × 2048
+
+Grid Size
+256 × 256
+512 × 512
+
+1024 × 1024
+2048 × 2048
+
+Nvidia 6600 GT
+
+CPU(Pts) 1
+
+CPU(Tri) 2 VBO+VT(Pts) 3
+
+259
+65
+17
+5
+
+155
+39
+10
+3
+
+200
+80
+23
+6
+
+Nvidia 7950 GX2
+
+CPU(Pts) 1
+
+CPU(Tri) 2 VBO+VT(Pts) 3
+
+370
+94
+24
+6
+
+180
+50
+13
+3
+
+740
+215
+59
+15
+
+Nvidia 8800 GTX
+
+CPU(Pt)1
+
+CPU(Tr)2 VT(Pt)3 VT(Tr)4
+
+705
+177
+44
+13
+
+374
+98
+24
+7
+
+1851
+905
+261
+68
+
+731
+284
+90
+27
+
+Following table contains the FPS numbers for rendering of Geom-
+etry Images. We have used the freely available Geometry Image of
+the Bunny available at Hoppe’s web site.
+
+1
+
+2
+
+Rendering Points
+
+Rendering Triangles with help of Geometry generation
+
+6600 GT 1
+
+7950 GX2 1
+
+8800 GTX 1
+
+8800 GTX 2
+
+271
+
+713
+
+2281
+
+976
+
+3 Geometry Shader
+
+Geometry Shader is the most notable new feature of Shader Model
+4.0. This deﬁnes a new shader type which runs on the Graphics
+Processing Unit. Geometry shaders are invoked after vertices are
+processed by vertex shader, but prior to color clamping, ﬂat shad-
+ing and clipping (Figure 6). The input to the Geometry Shader
+is a single primitive (point, line, triangle) and other attributes like
+texture coordinates, color, normal, etc. The output is a list of primi-
+tives, whose number, type, and attributes need not match with those
+of the input primitives. The Geometry Shader can use all input
+information and data stored in textures to generate its output.
+It
+can, therefore, discard the geometry in the pipeline or insert new
+
+Figure 6: The Shader Model 4.0 Graphics Pipeline
+
+geometry into it. The new and potentially disconnected primitives
+generated by the geometry shader are treated like other primitives
+coming directly from the application (OpenGL/DirectX).
+
+Input/Output to the geometry shader and maximum number of ver-
+tices emitted per call of geometry shader can be mentioned in the
+following way from an OpenGL code.
+
+...
+//Informing the Geometry Shader that there will be 4
+//vertices emitted per primitive
+
+glProgramParameteriEXT ( shader,
+GL_GEOMETRY_VERTICES_OUT_EXT, 4 );
+
+//Informing the Geometry Shader that the input type to
+//GS will be Points
+
+glProgramParameteriEXT ( shader,
+GL_GEOMETRY_INPUT_TYPE_EXT, GL_POINTS );
+
+//Informing the Geometry Shader that the Output type to
+//GS will be Triangle Strips
+
+glProgramParameteriEXT ( shader,
+GL_GEOMETRY_OUTPUT_TYPE_EXT, GL_TRIANGLE_STRIP );
+...
+
+The above scenario called for
+
+Geometry shader can also access the neighbouring vertices
+of a primitive.
+introduc-
+lines with ad-
+tion of a category of primitives viz.
+jacency (LINES ADJACENCY EXT),
+line strips with adja-
+cency (LINE STRIP ADJACENCY EXT),
+triangles with adja-
+cency (TRIANGLES ADJACENCY EXT), and triangle strips with
+adjacency (TRIANGLE STRIP ADJACENCY EXT). These prim-
+itives take in more than the usual number of vertices; a line with
+adjacency requires 4 vertices to describe its end points and their
+neighbours and a triangle with adjacency needs 6. Thus, at the cost
+of extra geometry transfer, one can access the important informa-
+tion of the neighbourhood of a primitive in the geometry shader.
+Silhouette calculation of 3D models requires neighbouring infor-
+mation for the calculation of gradients. Thus, one can use TRI-
+ANGLES ADJACENCY EXT primitives in order to provide the
+neighbourhood vertices to be processed in the geometry shader. Ge-
+ometry shader can then access a couple of extra vertices and ﬁnd the
+
+required information (normals and tangents).
+
+3.1 Geometry Generation
+
+We describe an example of genertion and expanding of geometry
+by the Geometry Shader in this section by rendering terrains of var-
+ious size with diffrent amount of geometry being sent and rest of it
+being generated on the Geometry Shader. With the driver version
+1.0-9755 for Linux the maximum amount of geometry which can
+be generated is capped at 128 vertices per Geometry Shader execu-
+tion..
+
+Grid Size
+512 × 512
+512 × 512
+512 × 512
+
+1024 × 1024
+1024 × 1024
+1024 × 1024
+
+Grid Size
+512 × 512
+512 × 512
+512 × 512
+
+1024 × 1024
+1024 × 1024
+1024 × 1024
+
+Geom. Sent1
+512 × 512
+256 × 256
+128 × 128
+
+1024 × 1024
+
+512 × 512
+256 × 256
+
+Geom. Gen.2
+
+2 × 2
+4 × 4
+8 × 8
+2 × 2
+4 × 4
+8 × 8
+
+Geom. in VBO3 Geom. Gen.2
+
+512 × 512
+256 × 256
+128 × 128
+
+1024 × 1024
+
+512 × 512
+256 × 256
+
+2 × 2
+4 × 4
+8 × 8
+2 × 2
+4 × 4
+8 × 8
+
+FPS
+203
+91
+21
+51
+23
+6
+
+FPS
+213
+91
+21
+60
+23
+6
+
+1
+
+2
+
+3
+
+Amount of Geometry being sent from CPU (as Points)
+
+Amount of Geometry generated in Geometry Shader to form the Grid
+
+Amount of Geometry stored in VBO
+
+Shader Model 4 Terrain System is a completely GPU based terrain
+system where most of processing is done on the geometry shader
+with terrain geometry being accesed from the textures (2D Array
+Textures), tiles (grid of triangles) generated and expanded with
+some information from small VBOs and textures containing geom-
+etry and stitching of these tiles. The amount of geometry which can
+be generated on Geometry Shader is limited. Currently on a Nvidia
+8800GTX we are able to expand a vertex to 128 vertices. With
+this constraint we render a 257 × 257 tile (with an extra row and
+coloumn for stitching at top and right borders) with various VBO
+sizes of 32 × 32, 64 × 64 etc. Further these points from the VBOs
+are expanded as grids to ﬁll in for the missing near by points.
+
+With the introduction of Geometry Shader one can send in dummy
+points which can be further expanded as a grid of triangles in the
+geometry shader. A novel approach for two level culling (Sec-
+tion 3.2) was used in the Terrain System which performs a sec-
+ond level culling algorithm on the incoming points to the vertex
+shader and culls the vertices which would lie outside the frustum
+after going through a Modelview and Projection. Thus for each
+tile we would perform a tile-level culling on the CPU and set a
+ﬂag for the tiles which are intersecting the frustum. Later in the
+vertex shader we receive a m × n grid of points for a tile of size
+M × N (m < M ; n < N ), for each of these incoming points we
+pass them through the second level culling test, thus avoiding a lot
+of expansion and rendering of extra geometry.
+
+3.2 Two Level Culling
+
+Geometry deletion enables culling of geometry in the geometry
+shader. The tiles in the terrain system undergo the ﬁrst level of
+culling on the CPU where the CPU culls large tiles and marks the
+ones which intersect the frustum. The marked tiles are then tested
+for further culling on the GPU in vertex shader. For each tile of
+size 256 × 256 to be rendered (Figure 7), CPU sends a VBO of size
+
+Figure 7: Tiles and Tilelets involved in ﬁrst and second level of
+culling
+
+S
+P
+F
+
+ 240
+
+ 220
+
+ 200
+
+ 180
+
+ 160
+
+ 140
+
+ 120
+
+ 100
+
+ 80
+
+ 60
+
+FPS With/Without 2-Level Culling
+
+With 2nd-Level Culling
+Without 2nd-Level Culling
+
+ 0
+
+ 5
+
+ 10
+
+ 15
+
+ 20
+
+ 25
+
+Time
+
+Figure 8: Two level culling performance against generating and
+rendering the extra geometry left out by the CPU culling
+
+m × n where m < 256, n < 256 ( in case of Nvidia 8800GTX,
+32 < m < 256, 32 < n < 256, where maximum geometry gener-
+ation (8 × 8) happens with m = 32, n = 32). Each of these points
+in the grid of m × n are then tested in the vertex shader if they lie
+inside or outside the frustum and accordingly labelled as culled or
+not culled. We save the geometry generation and rendering load for
+these points by culling them in vertex shader. The culling on the
+vertex shader is performed by mapping these grid points to screen
+space and testing them against a range. The main advantage of
+the technique is that we render exact amount of geometry required,
+thus an exact culling is performed. Secondly we can reduce the
+CPU load by increasing the size of tiles.
+
+4 Array Textures
+
+One of the extensions introduced with Shader Model 4.0 is
+EXT texture array. This extensions introduces the idea of one-
+and two-dimensional array textures. A Texture array is a collec-
+tion of one- and two-dimensional images of identical size and for-
+mat, organized in layers. TexImage2D is used to specify an one-
+dimensional array texture, where the height specify the number of
+layers for the array texture. Similarly TexImage3D is used to declare
+a two-dimensional array texture, where the depth specify the num-
+ber of layers of 2D textures. Maximum number of layers which can
+
+be attached together can be queried using GetIntegerv with pname
+as MAX ARRAY TEXTURE LAYERS EXT. On a nVIDIA 8800
+GTX the maximum number of layers possible is 512.
+
+2D-Array Textures are declared as follows :
+
+//Generate an opengl texture
+glGenTextures(1,&texid);
+glBindTexture(GL_TEXTURE_2D_ARRAY_EXT,texid);
+
+//Setting up the parameters, note the ’R’ space as well
+glTexParameteri( GL_TEXTURE_2D_ARRAY_EXT,
+
+GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+
+glTexParameteri( GL_TEXTURE_2D_ARRAY_EXT,
+
+GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+
+glTexParameteri( GL_TEXTURE_2D_ARRAY_EXT,
+
+GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+
+glTexParameteri( GL_TEXTURE_2D_ARRAY_EXT,
+
+GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+
+glTexParameteri( GL_TEXTURE_2D_ARRAY_EXT,
+
+GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE );
+
+//Create space for the array texture
+glTexImage3D( GL_TEXTURE_2D_ARRAY_EXT, 0, GL_RGBA, width,
+
+height, depth, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+//Put individual 2D image data to each layer
+glTexSubImage3D( GL_TEXTURE_2D_ARRAY_EXT, 0, 0, 0, layer,
+
+width, height, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+image_data_pointer);
+
+Texture array can be used in a shader as :
+
+//declaration of sampler
+uniform sampler2DArray tex;
+...
+//fetching color from layer texcoord.z from the 2D
+//location texcoord.xy from sampler terraintex
+color = texture2DArray ( terraintex, texcoord ).rgba;
+...
+
+Currently, this extension is not supported on the ﬁxed-function frag-
+ment processing. Array textures can be accessed only using the
+programmable shaders. A layer is selected by specifying the t or r
+texture coordinate for 1D and 2D array textures, respectively. Fur-
+ther it is accessed as though it were a one- or two-dimensional tex-
+ture. A 2D array texture sounds similar to a 3D texture. There are
+few differences between 2D array textures and 3D textures. In case
+of 2D array textures, texture lookups do not ﬁlter between layers,
+though the same can be achieved in the shaders, where as in case
+of 3D textures various ﬁltering options are provided. Rendering to
+different layers or 2D textures can only be achieved by binding a
+2D array texture to a frame buffer object.
+
+Texture arrays are ideal to store data which is independent at each
+layers, for e.g. terrain data. Terrain can be divided into blocks of
+desired size (1024 × 1024, 2048 × 2048) and these blocks can be
+stored as various layers in a 2D array texture. An array texture is
+accessed as a single unit in a programmable shader, using a single
+coordinate vector. A terrain extending over m × n blocks can be
+stored as an array texture with mn layers, giving the user a sin-
+gle point access to the whole or currently cached terrain. Several
+computations like physics calculation (Section 6.1) need to have
+access to whole of the terrain. With array textures any part of the
+terrain can be accessed by specifying the layer with r texture co-
+ordinate in case of a 2D array textures, thus providing the ease of
+selecting textures in the programmable shaders rather than an in-
+tervention from CPU regarding the binding of correct texture. The
+same was possible with 3D textures, but the array textures can ad-
+ditionaly be rendered to by binding them to a frame buffer object
+(EXT framebuffer object). Along with physics, a dynamic terrain
+could itself undergo deformation on the ﬂy (may be an impact from
+the ball can produce craters). A continously changing terrain which
+is stored as an array texture(s) can be evolved by rendering to these
+layers [Bhattacharjee et al. 2007].
+
+Figure 9: Multiple Shadows in 2 Pass.
+
+5 Layered Rendering
+
+The main use of 2D array texture comes with Layered Rendering.
+With an array texture bound to a framebuffer object we can route
+geometry from geometry shader to different layers. Thus rendering
+different scenes/views in a single pass becomes possible. Multiple
+Render Targets were introduced in order to render to more than one
+framebuffers at Fragment Shader level. With MRT, we can produce
+more than one output at the pixel level. We can say Layered Ren-
+dering provides the freedom of doing the same thing at geometry
+level and each layer can have independent rasterization.
+
+In case of dynamic Environment Mapping, i.e., when the Environ-
+ment Map is not static and changes with camera motion, we can
+produce all the six faces of the map in a single pass thus giving a
+2-pass algorithm for Cube-Map rendering. A couple of more appli-
+cations of Layered Rendering which are also described below are,
+two pass motion blur and 2 pass multiple lights dynamic shadows.
+To bind the layers of an array texture to a frame buffer object, fol-
+lowing code can be used.
+
+...
+//Generate Texture to hold the 2D Array Texture
+glGenTextures( 1, &colorTex );
+glBindTexture( GL_TEXTURE_2D_ARRAY_EXT, colorTex );
+
+//Create a 2D array texture and set other properties
+glTexImage3D ( GL_TEXTURE_2D_ARRAY_EXT, 0, GL_RGBA8, 256,
+
+256, 2, 0, GL_RGBA, GL_FLOAT, 0 );
+
+...
+//Generate an FBO
+glGenFramebuffersEXT( 1, &fbo );
+glBindFramebufferEXT ( GL_FRAMEBUFFER_EXT, fbo );
+glBindTexture ( GL_TEXTURE_2D_ARRAY_EXT, 0 );
+
+//Attach the 3D texture which contains 2 Layers
+//to the FBO
+glFramebufferTextureEXT ( GL_FRAMEBUFFER_EXT,
+
+GL_COLOR_ATTACHMENT0_EXT, colorTex, 0 );
+
+...
+
+5.1 Efﬁcient Multiple Dynamic Light Shadows
+
+We use Layered Rendering to compute all N shadow maps cor-
+responding to N lights in a single pass. Earlier methods us-
+ing the Shadow Maps needed N passes for computation of N
+Depth/Shadow maps. Layered Rendering allows an application to
+bind an entire complex texture to a framebuffer object, and render
+primitives to arbitrary layers computed at run time. The layer to
+render to is speciﬁed by writing to the in-built variable gl layer.
+
+Pass 1 : Pass the corresponding view & projection matrices for each
+light along with the common model matrix of the scene to the Ge-
+ometry Shader. Each primitive is routed to N layers after multi-
+plying with ith view and projection matrices corresponding to ith
+
+Light source and the common Model Matrix, and the Depth Map is
+saved at ith Layer of the array of 2D textures.
+
+...
+gl_Layer = lightid;
+for (int ii = 0; ii < 3; ii++)
+{
+
+pos = gl_TextureMatrix[0] * gl_PositionIn[ii];
+
+pos = gl_TextureMatrix[1] * pos;
+gl_Position = gl_TextureMatrix[2] * pos;
+EmitVertex();
+
+}
+EndPrimitive();
+...
+
+Thus, for each incoming triangle above code directs a copy of the
+triangle to layer number lightid by setting gl layer to lightid. Tex-
+ture matrices are used here to store various modelview and projec-
+tion matrices corresponding to different lights.
+
+Pass 2 : Back-project each pixel in the pixel shader to each of the
+light’s frustum comparing the depth of that particular pixel from
+light’s points of view. We get a boolean answer on whether the pixel
+in under shadow or not with respect to a particular light source.
+
+...
+for ( i = -p; i<=p ; i+=1.0 )
+
+for ( j = -q; j<=q ; j+=1.0 )
+{
+
+//Light i
+t.x = coordPos0.x + i/TSIZE;
+t.y = coordPos0.y + j/TSIZE;
+t.z = 0;
+depth = texture2DArray( sampler, t ).r;
+depthsqr = depth * depth;
+m01 += depth / 25.0;
+m02 += depthsqr / 25.0;
+
+}
+
+//sampler is the 2D array texture
+
+//Above is performed for each light computing mean sigma
+//of depth values over a window of pxq (soft-shadow
+//using Variance Shadow Maps technique).
+...
+...
+//Testing current pixel for shadow from Light i
+if ( coordPos0.z > m01 && coordPos0.x <= 1.0 &&
+coordPos0.x >= 0.0 && coordPos0.y <= 1.0 &&
+coordPos0.y >= 0.0 )
+
+{
+
+}
+...
+
+sigma02 = m02 - ( m01 * m01 );
+prob = sigma02 / ( sigma02 + ( (coordPos0.z - m01)
+
+* (coordPos0.z - m01) ) );
+
+color = color * prob;
+
+With N comparisons we get N hard shadows corresponding to N
+light sources in 2 passes. One can use any image based technique
+to incorporate soft shadows, we have used Variance Shadow Maps
+[Donnelly and Lauritzen 2006] for the same.
+
+5.2 Motion Blur using Layered Rendering
+
+Motion blur is simulated using the accumulation buffer. Accumula-
+tion buffers provide a higher precision buffer as compared to frame
+buffer for adding different images with varying weight. A blended
+image comprised in accumulation buffer with n number of images
+takes n + 1 passes. Thus, the number of passes is proportional to
+the quality of blur needed.
+
+As described with multiple shadow lighting, we can transform this
+problem too into a two pass algorithm using the Layered Rendering.
+This example shows how layers can be used to simulate motion blur
+by rendering to different layers each having a different modelview
+and optionally projection matrix suited for generating object space
+blur (Figure 10). We used m different modelview matrices in order
+
+Figure 10: A rotating Teapot with motion blur.
+
+to convey m previous positions of the object to the geometry shader
+using the Texture matrices available ( 32 on Nvidia 8800 GTX).
+
+coord.xy = gl_TexCoord[0].xy;
+for ( float i=1.0; i<NLAYERS; i+=1.0 )
+{
+
+coord.z = i;
+color += (NLAYERS-i) * texture2DArray(samp,coord);
+
+}
+//Handling the current draw position here
+coord.z = 0;
+color += texture2DArray(samp,coord);
+
+//Making Alpha 1
+color.rgba /= color.a;
+
+Above code shows how we put together the various framebuffers
+stored in the ﬁrst pass in a 2D array texture.
+
+6 Transform Feedback
+
+Stream-Output/Transform-Feedback is a new feature in the render-
+ing pipeline to stream data out in the middle of the pipeline to the
+memory (Figure 6). This gives the facility of not going through the
+whole pipeline to process stream data of the object if it is not to be
+rendered. Also, objects can be rendered and some information, on
+the ﬂy, can be recorded working in the same pipeline. With this, it
+is possible to change the state of the object continuously, modifying
+the original data on the GPU itself, without any interference from
+the CPU.
+
+6.1 Physics of point objects
+
+Simple physics calculation of objects can be done with only the
+previous physical state of the object. Instantaneous position and ve-
+locity are enough for simple physics simulation of point objects. At
+any moment, the position and velocity can be updated from the pre-
+vious state and external forces giving them acceleration. Our GPU-
+based terrain representation (Section 4) allows quick physics sim-
+ulation on using the transform feedback feature of the new GPUs.
+The CPU renders the objects for interaction, such as a bunch of
+balls released over a terrain.
+The CPU triggers a buffer object containing point primitives for
+each ball with vertex as its initial position and texture coordinate
+as its initial velocity. The vertex shader computes its next position
+and velocity according to necessary acceleration (e.g. gravitation)
+which is determined by its current position and velocity. Vertex
+shader also accesses the terrain data stored as textures to fetch the
+height at the object’s position.
+If the object’s height is less than
+that of terrain’s, then there is a collision with the terrain. We reﬂect
+the velocity vector of the object with respect to the terrain’s normal
+at that position. The changed position and velocity is recorded in
+another buffer object by the vertex shader to use in the next itera-
+tion with the help of transform feedback; the rest of the pipeline is
+discarded. By doing ping pong between the two buffer objects, the
+positions and velocities get updated every frame. One of the buffer
+
+Physics Graph
+
+Time in Seconds
+
+ 0.05
+
+ 0.045
+
+ 0.04
+
+ 0.035
+
+ 0.03
+
+ 0.025
+
+ 0.02
+
+ 0.015
+
+ 0.01
+
+ 0.005
+
+s
+d
+n
+o
+c
+e
+S
+n
+
+ 
+
+i
+ 
+
+e
+m
+T
+
+i
+
+ 0
+
+ 500  1000  1500  2000  2500  3000  3500  4000  4500  5000
+
+Number of Balls
+
+Figure 12: Time taken for computation increases linearly with lin-
+ear increase in number of balls
+
+The bottleneck of transfering updated physics state to the GPU
+from CPU for physics is overcome by keeping CPU oblivious to
+the physics state. Complete physics can be performed on the GPU
+using the transform feedback, thus cutting on the precious CPU-
+GPU bandwidth. A major advantage of performing physics using
+the transform feedback on the GPU is that its highle scalable. We
+have tested the physics for point objects for high numbers and the
+results we get are very convincing. We ﬁnd out that the computation
+load grows linearly with the increase in balls (Figure 12).
+
+We use array textures to represent the GPU cache of the terrain to
+facilitate the interaction of objects with the terrain as mentioned in
+Section 4. This makes it possible to use the layer ID of an individ-
+ual block as a variable. Thus, an appropriate block of the cache can
+be selected based on the external object’s (x, y) location. Conven-
+tional textures are statically bound and their IDs cannot be variable.
+
+References
+
+ASIRVATHAM, A., AND HOPPE, H. 2005. Terrain rendering using
+
+gpu-based geometry clipmaps. GPU Gems 2, 46–53.
+
+BHATTACHARJEE, S., PATIDAR, S., AND NARAYANAN, P. J.
+
+2007. Technical report on gpu-resident terrains. Tech. rep.
+
+BLYTHE, D. 2006. The direct3d 10 system. ACM Transactions of
+
+Graphics 25, 3, 724–734.
+
+CROW, F. C. 1977. Shadow algorithms for computer graphics.
+In SIGGRAPH ’77: Proceedings of the 4th annual conference
+on Computer graphics and interactive techniques, ACM Press,
+New York, NY, USA, 242–248.
+
+DONNELLY, W., AND LAURITZEN, A. 2006. Variance shadow
+maps. In I3D ’06: Proceedings of the 2006 symposium on In-
+teractive 3D graphics and games, ACM Press, New York, NY,
+USA, 161–165.
+
+GOVINDARAJU, N. K., LARSEN, S., GRAY, J., AND MANOCHA,
+D. 2006. Memory—a memory model for scientiﬁc algorithms
+on graphics processors.
+In SC ’06: Proceedings of the 2006
+ACM/IEEE conference on Supercomputing, ACM Press, New
+York, NY, USA, 89.
+
+Figure 11: Screenshot
+Physics of balls interacting with the terrain
+
+from Shader Model 4 Terrain System.
+
+objects is then used to render an object at its location. We were
+able to trigger up to 4000 balls (objects) to interact with the terrain,
+at interactive framerates (21). The performance drops linearly with
+the increase in number of objects (Graph 12).
+
+glGenBuffersARB ( 1, &tfvbo[0] );
+glBindBufferARB ( GL_ARRAY_BUFFER_ARB, tfvbo[0] );
+glBufferDataARB ( GL_ARRAY_BUFFER_ARB,
+
+count*4*sizeof(float), initdata, GL_STATIC_DRAW_ARB );
+
+Above code demonstrates how an array buffer is declared for use of
+storing the streamed output-ed data.
+
+glActiveVaryingNV( shader, "varpos\0" );
+glActiveVaryingNV( shader, "velocity\0" );
+
+glLinkProgramARB(shader);
+
+loc[0] = glGetVaryingLocationNV ( shader, "varpos\0" );
+loc[1] = glGetVaryingLocationNV ( shader, "velocity\0" );
+
+Getting a handle to variables which will be recorded during trans-
+form feedback.
+
+glBindBufferRangeNV ( GL_TRANSFORM_FEEDBACK_BUFFER_NV,
+
+0, tfvbo[1-current_buffer], 0, 4*count*sizeof(float) );
+
+...
+...
+glBeginTransformFeedbackNV( GL_LINES );
+
+glEnableClientState( GL_VERTEX_ARRAY );
+glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+
+glBindBufferARB( GL_ARRAY_BUFFER_ARB,
+
+tfvbo[current_buffer] );
+
+glVertexPointer( 4, GL_FLOAT, 0, NULL );
+glBindBufferARB ( GL_ARRAY_BUFFER_ARB,
+
+ttfvbo[current_buffer] );
+
+glTexCoordPointer( 4, GL_FLOAT, 0, NULL );
+
+glDrawArrays( GL_POINTS, 0, 1 );
+
+glDisableClientState( GL_TEXTURE_COORD_ARRAY );
+glDisableClientState( GL_VERTEX_ARRAY );
+
+glEndTransformFeedbackNV();
+
+Code snippet for rendering using VBOs with transform feedback
+enabled. The input primitives are set as GL LINES which should
+match the Geometry shader input set earlier.
+
+...
+varpos = gl_PositionIn[0];
+velocity = gl_TexCoordIn[0][0];
+
+varpos.x += 0.01;
+velocity.x -= 0.01;
+...
+
+Geometry Shader code where the variables of our choice are
+recorded with transform feedback.
+
+GU, X., GORTLER, S. J., AND HOPPE, H. 2002. Geometry im-
+
+ages. ACM Trans. Graph. 21, 3, 355–361.
+
+HARRIS, W., 2005. bit-tech.net, a bluffer’s guide to shader models.
+
+LOSASSO, F., AND HOPPE, H. 2004. Geometry clipmaps: Terrain
+rendering using nested regular grids. ACM Trans. Graph. 23, 3,
+769–776.
+
+NVIDIA, 2004. Improve batching using texture atlases, nvidia sdk
+
+white paper.
+
+WAGNER, D. 2004. Terrain geomorphing in the vertex shader.
+ShaderX2, Shader Programming Tips and Tricks with DirectX 9,
+Wordware Publishing.
+
+WILLIAMS, L. 1978. Casting curved shadows on curved surfaces.
+
+270–274.
+
+

@@ -1,0 +1,1109 @@
+Eurographics Symposium on Parallel Graphics and Visualization (2006)
+Alan Heirich, Bruno Rafﬁn, and Luis Paulo dos Santos (Editors)
+
+Dynamic Load Balancing for Parallel Volume Rendering
+
+Stéphane Marchesin and Catherine Mongenet and Jean-Michel Dischler
+
+LSIIT, UMR CNRS-ULP 7005, Louis Pasteur University, Strasbourg, France
+
+Abstract
+Parallel volume rendering is one of the most efﬁcient techniques to achieve real time visualization of large datasets
+by distributing the data and the rendering process over a cluster of machines. However, when using level of detail
+techniques or when zooming on parts of the datasets, load unbalance becomes a challenging issue that has not
+been widely studied in the context of hardware-based rendering. In this paper, we address this issue and show how
+to achieve good load balancing for parallel level of detail volume rendering. We do so by dynamically distributing
+the data among the rendering nodes according to the load of the previous frame. We illustrate the efﬁciency of our
+technique on large datasets.
+
+Categories and Subject Descriptors (according to ACM CCS): I.3.3 [Computer Graphics]: Picture/Image Generation
+– Viewing algorithms I.3.2 [Computer Graphics]: Graphics Systems – Distributed/network graphics
+
+1. Introduction
+
+With the advent of high performance interconnection net-
+works in recent years, clusters have become an inexpensive
+alternative to supercomputers. More recently, improvements
+in consumer graphics hardware allow the use of clusters as a
+cost effective solution for real-time visualization by adding
+a consumer-grade graphics card to each node.
+
+In the ﬁeld of visualization, parallel rendering allows in-
+teractive visualization of large datasets at a high quality over
+a cluster of workstations, which could not be done on a sin-
+gle machine. Techniques for doing parallel rendering are
+usually classiﬁed into three groups according to the place
+of the sorting phase in the graphics pipeline as done by Mol-
+nar et al [MCEF94]. If sorting is done prior to transforming
+and rasterizing the primitives, the approach is of the sort-ﬁrst
+kind. If sorting is done between the transformation and ras-
+terization phases, it is of the sort-middle kind. If sorting is
+done after rasterizing the primitives, the approach is called
+sort-last. However, only sort-ﬁrst and sort-last techniques
+make sense for volume rendering. In this paper, we focus
+on sort-last techniques. We motivate this choice in section 2.
+
+In the ﬁeld of volume rendering, level of detail techniques
+are widely used to visualize large datasets on a single ma-
+chine [WWH∗00, PTCF02, LHJ99] by decomposing these
+datasets into bricks, and by using level of detail techniques.
+However, using such techniques together with distributed
+
+c(cid:13) The Eurographics Association 2006.
+
+rendering results in serious load unbalance. For instance,
+when a static data distribution is chosen, if the user zooms
+on parts of the model, one node might spend signiﬁcantly
+more rendering time than the others because its visible data
+share is bigger, while other nodes could be idling because
+their data share is not visible. Similarly, if a level of de-
+tail approach is used, a single node might have to render its
+data share at a higher resolution than the other nodes. Ob-
+viously, in these two situations, load imbalance slows down
+the whole rendering process and is not desirable. For this
+reason, level of detail techniques have rarely been used in the
+context of parallel volume rendering, while they could be ex-
+tremely valuable to achieve visualization of very large scale
+datasets. In this paper, we overcome this issue by propos-
+ing a technique to compute an approximate load balancing
+for sort-last parallel volume rendering. This technique uses
+a time coherent dynamic data distribution to achieve good
+load balance.
+
+The paper is organized as follows: related works are in-
+troduced in section 2. Section 3 describes our load balancing
+algorithm in detail. Section 4 is dedicated to implementation
+details and experimental results. We have experimented with
+1GB datasets on a cluster with up to 16 nodes. Finally, con-
+cluding remarks and open issues are discussed in section 5.
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+2. Related works and motivation
+
+In the ﬁeld of sequential volume rendering, numerous tech-
+niques allow visualizing large datasets on a single machine
+using simpliﬁcation-based methods. Weiler et al [WWH∗00]
+and Lamar et al [LHJ99] use different resolution textures
+depending on factors like the distance to the observer or
+the brick contents, thereby reducing the total requirements
+for texture memory. This allows better frame rates and
+larger datasets visualization. Guthe et al [GS04] use ad-
+vanced techniques such as occlusion culling and empty
+space skipping to further speed up rendering. Strengert et
+al [SMW∗04] propose an efﬁcient hierarchical sort-last vol-
+ume rendering technique, and report interactive results on a
+Myrinet interconnection network. Lamar et al [LHJ03] pro-
+pose an efﬁcient error computation technique for 3D data.
+This technique ﬁrst computes an histogram over each brick,
+and subsequently uses the fact that evaluating the error over
+an histogram of the values in a given brick is faster than eval-
+uating the error at each voxel. In particular, this technique
+can be used to quickly ﬁnd the parts of the data that are not
+visible with respect to the current transfer function by sim-
+ply applying this transfer function to the histogram. How-
+ever, using such techniques as-is in a parallel visualization
+environment results in a serious load imbalance between the
+computation nodes.
+
+Parallel rendering techniques are usually classiﬁed into
+three groups according to the classiﬁcation done by Mol-
+nar et al in [MCEF94] : sort-ﬁrst, sort-middle and sort-last
+rendering techniques. However, only sort-last and sort-ﬁrst
+apply in the parallel volume rendering context.
+
+• In the sort-ﬁrst situation, primitives are distributed among
+the nodes at the beginning of the rendering pipeline, usu-
+ally by splitting the screen into regions and associating
+each region to one node. In this approach, load balancing
+can be achieved by dynamically splitting the screen into
+rectangular regions as done by Samanta et al [SZF∗99].
+However, such a dynamic splitting does not withdraw
+the main drawback of the sort-ﬁrst approach, i.e. lots
+of data redistribution happens as shown by Bethel et al
+[BHPB03].
+
+• In the sort-last situation, the data is split between the
+nodes, and each node renders its own portion. Then, com-
+positing takes the depth information into account to form
+a ﬁnal image from each node’s rendering. Sort-last vol-
+ume rendering techniques are able to handle very large
+datasets as demonstrated by Wylie et al [WPLM01] by
+statically distributing these datasets among the nodes.
+Compression has also been used to push the data size limit
+further by Strengert et al [SMW∗04]. However, such sort-
+last techniques do not have a good load balance between
+the nodes. Hence when only some parts of the data are
+visible, or when some parts of the data are rendered using
+a lower level of detail then others, serious load imbalance
+can occur. Wang et al [WGS04] achieve dynamic load bal-
+
+ancing in the context of software based volume rendering
+using a space-ﬁlling curve. However, using such an ap-
+proach on graphics hardware would result in low perfor-
+mance, since it communicates each rendered block sep-
+arately, and therefore would result in lots of additional
+pixel readbacks. Lee et al [LSH05] achieve static load
+balancing of volume rendering by hierarchically subdivid-
+ing the data. Samanta et la [SFL01] achieve load balanced
+visualization using partial primitive replication, but their
+approach does not directly extend to volume rendering.
+Garcia et al [GS02] propose an interleaving technique for
+parallel volume rendering, and achieve load balancing in
+this context. However, their approach lowers the render-
+ing quality, which we would like to avoid.
+
+Our objective is to propose a parallel visualization technique
+for volume rendering which guarantees load balancing with-
+out inducing too many data communications that would pe-
+nalize the whole rendering process. Since sort-ﬁrst volume
+rendering imposes large data redistribution, we will focus on
+sort-last techniques which do not require such data redistri-
+bution.
+
+The main issue is therefore to present a technique to
+achieve load balancing in a sort-last context. The following
+phases have to be taken into account in parallel rendering:
+rasterization (including frame buffer readback), communi-
+cation and compositing. When focusing on large dataset vi-
+sualization, the frame time is dominated by the rendering
+phases. This is the reason why we concentrate on the ras-
+terization phase. Notice moreover that load balancing of the
+communications and compositing phases has already been
+achieved by Stompel et al in [SLM∗03]. To do so, the au-
+thors split the rendered data into pixel spans, and then com-
+pute a schedule of the compositing of these spans minimiz-
+ing the imbalance between the nodes.
+
+Level-of-detail techniques are crucial to efﬁcient visual-
+ization of large datasets. However, when combining level-of-
+detail techniques and parallelism, the rendering time over the
+nodes may vary widely : a node in charge of a higher detailed
+area will take signiﬁcantly more time to render its data than
+a node in charge of a lower detailed area. In order to avoid
+this load unbalance, we propose a technique which consists
+in dynamically redistributing the data among the nodes, so
+as to guarantee load balance. The contribution of this paper
+is therefore to propose a load-balanced, out-of-core, parallel
+level-of-detail technique. We also measure the optimal brick
+size performance-wise for gigabyte-sized datasets.
+
+3. Load balanced parallel rendering algorithm
+
+Our algorithm overview is as follows: before rendering, the
+data is split into bricks of equal size. During rendering, be-
+fore each frame, an approximation of the rendering cost is
+used to build the load balanced data distribution. Render-
+ing is then performed and compositing is ﬁnally achieved
+
+c(cid:13) The Eurographics Association 2006.
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+in a sort-last fashion. In the next two subsections we detail
+the data distribution algorithm and then describe how load
+balancing is achieved using a client-server approach. In par-
+ticular, the evaluation of the rendering cost is of uttermost
+importance to achieve good load balancing.
+
+3.1. Data distribution and caching
+
+The data is partitioned into equally-sized bricks of voxels,
+and bricks that cross the dataset borders are padded with
+empty voxels. These bricks are used as the basic data ele-
+ment in the whole distributed graphics pipeline, from data
+access up to the graphics hardware’s 3D textures. All these
+bricks have the same dimensions, which have to be a power
+of two. This constraint is inherited from the graphics hard-
+ware which imposes power of two for 3D texture sizes (as it
+ls the case on the GeForce FX cards we use). Notice how-
+ever that our method can handle bricks of arbitrary sizes.
+In order to be able to compute gradients on the boundaries,
+these bricks overlap by one voxel. The granularity we subse-
+quently use for data distribution is one brick. Using a brick
+granularity, we are thereby able to discard bricks that are
+not visible with respect to the current transfer function or
+the current viewing conditions. For example, if a brick is
+fully transparent it can be discarded. To achieve this, we
+have implemented the technique described by Lamar et al
+in [LHJ03]. This technique associates an histogram of the
+data with each brick. This histogram can then be convoluted
+with the current transfer function to determine the brick’s
+visibility. Similarly, bricks that fall outside the view frustum
+can be discarded.
+
+The bricks are dynamically distributed among the clients.
+To achieve high performance in data distribution, we use a
+multi-layered cache for the data bricks. This approach is de-
+picted in ﬁgure 1 : the data bricks are initially replicated from
+the ﬁle server to each client’s hard disk, which makes sub-
+sequent access to the data signiﬁcantly faster than fetching
+it through the network. Then at run time, bricks are fetched
+out-of-core from disk and are cached at two different levels:
+in system RAM, and in video RAM. The bricks are kept in
+video memory following a LRU (least recently used) policy.
+
+Figure 1: Hierarchical cache layout
+
+c(cid:13) The Eurographics Association 2006.
+
+3.2. Load balancing
+To achieve load balancing, we need to evaluate the rendering
+cost, that is to quantify the workload for rendering speciﬁc
+parts of the dataset. Finding such a quantiﬁcation function is
+very complex. A series of benchmarks have been conducted
+in order to ﬁnd the inﬂuence of the visualization parameters
+(texture size, screen size, texture contents, viewing angle,
+visibility of the data... ) on the rendering time. Some of the
+results are summarized in ﬁgure 2, and show that the render-
+ing time cannot be easily predicted. In particular, the viewing
+angle can affect rendering time by a factor of more than 3.
+Similarly, the viewing distance is not easily correlated to the
+rendering time for a given brick. Therefore, it is impractical
+to predict an accurate cost function using the visualization
+parameters. Thus, instead of trying to predict the workload,
+we use the rendering time of the previous frame as an esti-
+mation of the cost, and use it to adjust the load balancing for
+the next frame.
+
+Distance 50
+Distance 60
+Distance 80
+Distance 100
+Distance 120
+Distance 150
+Distance 200
+
+ 600
+
+ 550
+
+ 500
+
+ 450
+
+ 400
+
+ 350
+
+ 300
+
+ 250
+
+ 200
+
+ 150
+
+s
+m
+n
+
+ 
+
+i
+ 
+
+e
+m
+
+i
+t
+ 
+
+g
+n
+i
+r
+e
+d
+n
+e
+R
+
+ 100
+
+ 0
+
+ 50
+
+ 100
+
+ 150
+
+ 200
+Viewing angle
+
+ 250
+
+ 300
+
+ 350
+
+Figure 2: The rendering time for a brick, depending on two
+viewing parameters (angle and distance)
+
+Our load balancing technique is based on a kd-tree de-
+composition of the data space. A kd-tree is a binary tree
+where at each level the data is split along a plane which is
+orthogonal to one of the base axes (Ox,Oy,Oz). The data is
+split along each of these axes in an alternating fashion. If
+the depth of the tree is larger than 3, the splitting planes are
+used circularly. This ensures temporal locality of the decom-
+position when the tree is rebalanced. Changing the plane di-
+rection at the same level of the tree between two subsequent
+frames would result in a lot of data redistribution, and thus
+is avoided.
+
+The algorithm is implemented in a client-server fashion as
+depicted on ﬁgure 3. The server’s role is to build the kd-tree
+while the clients are in charge of rendering and composit-
+ing. Each client holds a portion of the data which is a par-
+allelepiped set of bricks that we call a zone. Initially, since
+there is no information on the rendering times, the server se-
+tups the kd-tree so that it decomposes the data into equally-
+sized zones. Then, after each rendered image, the rendering
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+and readback times are communicated back from the clients
+to the server, which uses them to re-balance the kd-tree.
+Once the tree has been entirely traversed, the server sends
+the data distribution to each of the clients by sending the ex-
+tremal points deﬁning the zone. Each client loads the appro-
+priate bricks, proceeds to render its zone and ﬁnally performs
+the compositing on the video buffers using the binary-swap
+sort-last algorithm proposed by Ma et al [MPHK94]. Since
+the zones generated by the Kd-tree are all parallelepipeds,
+and thus are all convex, compositing is trivially achieved by
+sorting the buffers generated by the clients according to their
+distance to the observer. The resulting frame is then sent to
+the server for ﬁnal display.
+
+Figure 3: Overview of the load balancing technique over the
+course of one frame
+
+Let us now detail how the costs are used on the kd-tree to
+rebalance the load. The rendering time information is added
+to each kd-tree node: each leaf node is associated with a
+client and holds the actual cost for its zone, and each in-
+ternal tree node holds the sum of the costs for its sub-tree.
+We use an additive metric to compute the cost of an internal
+tree node because rendering costs are additive. That is, we
+consider that a given workload can be spread on a number of
+nodes, and the sum of the computation times on these nodes
+is the same as the original workload computation time. In-
+deed, if a client were to render all the bricks associated with
+a subtree, the rendering time would be the sum of the ren-
+dering times of the tree leaves. This assertion has been ob-
+served experimentally for hardware-based graphics render-
+ing, as long as the volume of data can be held in graphics
+memory. The purpose of our algorithm is therefore to have
+balanced costs on all the leaf nodes, thereby achieving good
+load balance.
+
+Initially, since there is no rendering cost information, the
+server sets the same cost for all the nodes, as shown on ﬁgure
+4 for eight clients. Then, after the initial frame is rendered
+and for all subsequent frames, the client nodes communicate
+
+back the rendering costs to the server, which places them on
+the leaf nodes of the kd-tree. The costs are then propagated
+by adding them upwards the tree as shown on ﬁgure 4 and
+the server uses these costs to rebalance the kd-tree. The tree
+is parsed using a depth-ﬁrst traversal during which each in-
+ternal node is examined and balanced according to the cost
+of its children in the following way: the rendering cost for
+the zones of the two children are compared and the separat-
+ing plane between these two zones is moved by one slice of
+bricks in order to reduce the cost of the most expensive zone
+and correlatively increase the cost of the cheapest one. The
+plane is only moved by one slice at a time to avoid caus-
+ing too much data loading for each frame and also to pre-
+serve temporal data coherency. Thereby, the algorithm ini-
+tially converges towards a balanced state in a small number
+of frames, and subsequent adjustments are small enough to
+avoid disturbing real time rendering.
+
+Figure 5 illustrates the technique. This ﬁgure shows two
+subsequent frames and the corresponding brick decomposi-
+tion (in gray), kd-trees and resulting data distributions. In a
+depth-ﬁrst traversal, let us ﬁrst consider node I and its two
+children. Since the cost for A is bigger than the cost for B,
+the kd-tree splitting plane between zones A and B (depicted
+in green on ﬁgure 5) is moved by one slice of bricks towards
+A to reduce the workload for A and increase the workload
+for B. This shift is realized along the plane orthogonal to Ox.
+In the same way, when considering node J and its two chil-
+dren, because node D is more expensive than node C, the
+plane is moved towards D (as shown in dark blue on ﬁgure
+5). Moving up the tree and considering node M, the algo-
+rithm checks the costs of nodes I and J, and since the cost of
+J is larger than that of I, the plane orthogonal to Oz (depicted
+in yellow on the ﬁgure) is moved towards I. Node N is treated
+the same way. Then at the next step when moving up to node
+O, the plane orthogonal to Oy (shown in orange on the ﬁg-
+ure) is moved toward N since the cost of N is larger than that
+of M. The resulting data distribution is used to compute the
+next frame. The corresponding renderings are shown on ﬁg-
+ure 6, with each node drawing in a different color in order to
+highlight the respective zones.
+
+4. Implementation and results
+
+4.1. Implementation
+
+We have implemented our algorithm in C++. We use a GPU-
+based volume renderer with preintegration and level of de-
+tail. The communication layer was written using the socket
+API, and we use OpenGL for rendering. Since the render-
+ing phase mainly takes place on the GPU and the commu-
+nication phase is handled by the CPU, it makes sense to
+overlap them. To achieve good overlapping between ren-
+dering and communication, each node runs three threads.
+The ﬁrst thread handles rendering ; the second thread han-
+dles compositing and communication and the third thread
+handles data loading. As ﬁgure 7 shows, using threads for
+
+c(cid:13) The Eurographics Association 2006.
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+Figure 4: Propagating the load values by adding them up-
+wards the tree
+
+Figure 6: Resulting rendering from the previous load bal-
+ancing operation. Left: unbalanced. Right: balanced. Each
+client is conﬁgured to draw in a different color
+
+Figure 7: Classical (left) vs threaded (right) approach
+
+To achieve out-of-core data loading and memory caching,
+we use the mmap() system call to access to the datasets on
+each of the nodes. We have found mmap() to be signiﬁcantly
+faster than accessing the data ﬁle randomly using the fopen()
+and fseek() calls.
+
+4.2. Results
+
+We have tested our algorithm over a cluster of machines run-
+ning Linux connected by a gigabit ethernet network. The
+hardware conﬁguration details are described in table 1. To
+improve the gigabit ethernet network performance, we have
+enabled jumbo frames on the switch and on the machines
+used for the test, and we have increased the size of the send
+and receive queues for the network interfaces to 2000, as
+well as the size of the kernel network memory buffers to
+1 megabyte, and we have disabled the selective acknowl-
+edge (sack) algorithm. To achieve lower latency, we have
+disabled the nagle algorithm by setting the TCP_NODELAY
+socket option. All tests were conducted using a 1 gigabyte
+(1024 × 1024 × 1024 voxels) geological dataset obtained
+from X-Ray imaging. This dataset depicts a geological core.
+All renderings were done into a 1024*768 viewport.
+
+Figure 8 demonstrates the scalability of our implementa-
+
+Figure 5: Load balancing the kd-tree according to the cost
+function during two subsequent frames
+
+the rendering and communication processes allows efﬁcient
+overlapping of the communication phase with the render-
+ing phase. The high-latency network-bound communication
+phase mainly uses the network card, while the GPU-bound
+rendering phase uses the GPU exclusively for rendering.
+Thus, we overlap these two phases by creating one thread
+for each of them, which results in a speedup even on a sin-
+gle CPU machine. This is especially worthy since both com-
+munication and rendering can be blocking operations that
+would otherwise slow down rendering. Another thread is
+created which asynchronously fetches the data. The com-
+positing algorithm used is the binary-swap [MPHK94] tech-
+nique with bounding box optimization.
+
+c(cid:13) The Eurographics Association 2006.
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+Component
+
+CPU
+
+Memory
+Network
+
+Network card
+Graphics card
+
+Type
+
+1*Athlon XP 3000+
+
+1GB
+
+Gigabit Ethernet
+Intel pro 1000 MT
+
+GeForce FX 5900 XT
+
+Graphics memory
+
+128 MB
+
+Table 1: Hardware conﬁguration of a cluster node
+
+tion by showing the average rendering times over a precom-
+puted path for 2, 4, 8 and 16 nodes.
+
+Geological dataset (1024x1024x1024)
+Optimal time with a linear speedup
+
+ 700
+
+ 600
+
+ 500
+
+ 400
+
+ 300
+
+ 200
+
+ 100
+
+s
+m
+n
+
+ 
+
+i
+ 
+
+e
+m
+
+i
+t
+ 
+
+g
+n
+i
+r
+e
+d
+n
+e
+r
+ 
+
+e
+m
+a
+r
+f
+ 
+
+e
+g
+a
+r
+e
+v
+A
+
+ 0
+
+2
+
+4
+
+8
+
+Number of rendering nodes
+
+16
+
+Figure 8: Rendering times for the 1GB geological dataset
+
+Figure 9 compares threaded vs unthreaded versions of the
+code. Using a threaded approach results in a speedup be-
+tween approximately 5% and 10%. It is interesting to notice
+the inﬂuence of threading with respect to the network jitter-
+ing. With the non threaded approach, peaks in the graph are
+only going upwards, while in the threaded approach, a peak
+upwards is followed by a peak downwards. This is because
+the threaded approach is able to compute the next frame dur-
+ing the high network latency period, and thus is able to send
+the frame over the network as soon as the network is ready,
+thus resulting in a downward spike.
+
+We have tested different brick sizes (32 × 32 × 32, 64 ×
+32 × 32, 64 × 64 × 32, 64 × 64 × 64 and 128 × 64 × 64) in
+order to ﬁnd the right balance between small bricks (which
+allow ﬁner-grained load balancing but are more costly since
+there is a per-brick overhead) and large bricks (which have
+less overhead but have a coarser load balancing granularity).
+Figure 10 shows these measurements taken over a precom-
+puted path which starts far away from the data viewing the
+full set, and zooms on small parts. These results show that a
+brick size of 64 × 64 × 64 is a good choice since it results in
+the best performance.
+
+To show the inﬂuence of load balancing in the context
+
+s
+m
+n
+
+ 
+
+i
+ 
+
+e
+m
+
+i
+t
+ 
+
+g
+n
+i
+r
+e
+d
+n
+e
+R
+
+s
+m
+n
+
+ 
+
+i
+ 
+
+e
+m
+
+i
+t
+ 
+
+g
+n
+i
+r
+e
+d
+n
+e
+R
+
+ 700
+
+ 600
+
+ 500
+
+ 400
+
+ 300
+
+ 200
+
+ 100
+
+ 0
+
+ 0
+
+16 nodes, unthreaded
+16 nodes, threaded
+
+ 50
+
+ 100
+
+ 150
+
+ 200
+
+ 250
+
+Frame number 
+
+Figure 9: Threaded vs. unthreaded performance
+
+ 600
+
+ 500
+
+ 400
+
+ 300
+
+ 200
+
+ 100
+
+ 0
+
+ 0
+
+32x32x32 bricks
+64x32x32 bricks
+64x64x32 bricks
+64x64x64 bricks
+128x64x64 bricks
+
+ 20
+
+ 40
+
+ 60
+
+ 80
+
+ 100
+
+ 120
+
+ 140
+
+ 160
+
+Frame number 
+
+Figure 10: The inﬂuence of the brick size
+
+of parallel volume rendering, we ran the same camera path
+that zooms on the model, with and without our load balanc-
+ing technique, and using 8 and 16 nodes. As the observer
+gets closer to the model, the bigger the load imbalance is,
+and the more relevant a load balancing techniques becomes.
+These results are shown on ﬁgure 11. The balanced algo-
+rithm shows good performance since in the best case it re-
+duces the frame rendering time by a factor roughly equal to
+4. Moreover, it shows that 8 processors with load balanc-
+ing outperform 16 processors without load balancing. This
+is due to the choice of the path which zooms on parts of the
+data: as the observer gets closer to the object, only a fraction
+of the data remains visible. Thus, in an unbalanced approach,
+this results in most of the clients having almost nothing to
+render due to the invisibility of their zone. Obviously, only a
+few processors are then in charge of most of the actual ren-
+dering which results in slowdowns. On the various curves
+random peaks occur at some points. This is mainly due to
+network jittering. Such peaks, when their magnitude is large
+enough, are noticeable by the user, and could probably be re-
+moved using a dedicated interconnection network. Another
+
+c(cid:13) The Eurographics Association 2006.
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+remarkable result of ﬁgure 11 is that for the balanced algo-
+rithm 16 nodes outperform 8 nodes by a factor bigger than
+2. We attribute this to the fact that the 1GB dataset does not
+ﬁt within the 8 card’s video memory, and thus cause texture
+trashing. On the other hand with 16 nodes the dataset ﬁts
+into the video cards memory completely and thus no tex-
+ture uploads have to take place. Figure 12 presents a per-
+node breakup of the rendering time, showing that in the non-
+balanced case, a single node (node 5) is in charge of most
+of the rendering work, while in the balanced case, the work-
+load has been spread among all the nodes, thus resulting in
+a speedup.
+
+s
+m
+n
+
+ 
+
+i
+ 
+
+e
+m
+
+i
+t
+ 
+
+g
+n
+i
+r
+e
+d
+n
+e
+R
+
+ 1600
+
+ 1400
+
+ 1200
+
+ 1000
+
+ 800
+
+ 600
+
+ 400
+
+ 200
+
+ 0
+
+ 0
+
+16 cpu, load balancing
+8 cpu, load balancing
+16 cpu, no load balancing
+8 cpu, no load balancing
+
+ 50
+
+ 100
+
+ 150
+
+ 200
+
+Frame number 
+
+Figure 11: The inﬂuence of load balancing when zooming
+on part of the data
+
+s
+m
+n
+
+ 
+
+i
+ 
+
+e
+m
+
+i
+t
+ 
+
+n
+o
+
+i
+t
+
+a
+
+t
+
+u
+p
+m
+o
+C
+
+ 1800
+
+ 1600
+
+ 1400
+
+ 1200
+
+ 1000
+
+ 800
+
+ 600
+
+ 400
+
+ 200
+
+ 0
+
+Rendering time with load balancing
+Rendering time without load balancing
+
+1
+
+2
+
+3
+
+5
+4
+Node number
+
+6
+
+7
+
+8
+
+Figure 12: Balanced vs unbalanced breakup of the render-
+ing times
+
+Finally, thanks to our approach, we were able to render
+the full dataset at interactive frame rates while keeping the
+high detail of geological structures, as shown on ﬁgure 13.
+Interactive frame rates of approximately 5 frames per sec-
+ond are achieved using preintegrated rendering and shading
+when viewing the gigabyte dataset. Such frame rates are ob-
+tained even during close-up examinations, as opposed to ap-
+
+c(cid:13) The Eurographics Association 2006.
+
+proximately 1 frame per second with the non balanced ap-
+proach. Figure 14 shows the load balanced decomposition
+obtained using the 256 × 256 × 256 bonsai dataset.
+
+5. Conclusions and future works
+
+We have presented a method for load balancing parallel vol-
+ume rendering which ensures good load balance when used
+together with level of detail or when viewing only parts
+of a large dataset. This method relies on two points which
+are tightly coupled: a load balancing technique and a data
+caching and prediction technique based on a kd-tree de-
+composition. We also manage to totally avoid any prepro-
+cessing phase which could be prohibitive given the size of
+the datasets. This method proves particularly efﬁcient when
+zooming on large datasets, or when viewing parts of out-of-
+core datasets.
+
+Further improvements to our technique are possible.
+Thanks to our out-of-core data caching and prefetching sys-
+tem, our approach would suit very well to temporal datasets.
+Also, since it automatically adapts the workload to each
+nodes computing power, we would like to experiment our
+load balancing technique on heterogeneous clusters. In par-
+ticular, we think our technique could handle a network of
+heterogeneous machines without needing to explicitly mea-
+sure the respective performance of the nodes, but by adapt-
+ing the respective computation loads for each node on the
+ﬂy.
+
+6. Acknowledgments
+
+The authors would like to thank Yves Géraud from the "In-
+stitut de Physique du Globe de Strasbourg" UMR 7516, for
+providing the geological datasets used in this paper.
+
+References
+
+[BHPB03] BETHEL E. W., HUMPHREYS G., PAUL
+B. E., BREDERSON J. D.: Sort-ﬁrst, distributed memory
+parallel visualization and rendering. In IEEE Symposium
+on Parallel and Large-Data Visualization and Graphics
+(2003), pp. 41–50.
+
+[GS02] GARCIA A., SHEN H.-W.: An interleaved par-
+allel volume renderer with pc-clusters.
+In EGPGV
+’02: Proceedings of the Fourth Eurographics Workshop
+on Parallel Graphics and Visualization (Aire-la-Ville,
+Switzerland, Switzerland, 2002), Eurographics Associa-
+tion, pp. 51–59.
+
+[GS04] GUTHE S., STRASSER W.: Advanced Techniques
+for High-Quality Multi-Resolution Volume Rendering.
+Computers & Graphics 28, 1 (Feb. 2004), 51–58.
+
+[LHJ99] LAMAR E., HAMANN B., JOY K. I.: Multires-
+olution techniques for interactive texture-based volume
+In Proceedings of the IEEE Visualization
+visualization.
+
+S. Marchesin & C. Mongenet & J-M. Dischler / Dynamic Load Balancing for Parallel Volume Rendering
+
+conference (1999), D. Ebert M. G., Hamann B., (Eds.),
+pp. 355–362.
+
+[LHJ03] LAMAR E. C., HAMANN B., JOY K. I.: Efﬁ-
+cient Error Calculation for Multiresolution Texture-Based
+Volume Visualization. Springer-Verlag, Heidelberg, Ger-
+many, 2003, pp. 51–62.
+
+[LSH05] LEE W.-J., SRINI V. P., HAN T.-D.: Adaptive
+and scalable load balancing scheme for sort-last parallel
+volume rendering on gpu clusters, 2005.
+
+[MCEF94] MOLNAR S., COX M., ELLSWORTH D.,
+FUCHS H.: A sorting classiﬁcation of parallel rendering.
+IEEE Comput. Graph. Appl. 14, 4 (1994), 23–32.
+
+[MPHK94] MA K.-L., PAINTER J. S., HANSEN C. D.,
+KROGH M. F.: Parallel volume rendering using binary-
+swap compositing.
+IEEE Comput. Graph. Appl. 14, 4
+(1994), 59–68.
+
+[PTCF02] PLATE J., TIRTASANA M., CARMONA R.,
+FRÖHLICH B.: Octreemizer: a hierarchical approach for
+interactive roaming through very large volumes. In Pro-
+ceedings of the symposium on Data Visualisation 2002
+(2002), Eurographics Association, pp. 53–ff.
+
+[SFL01] SAMANTA R., FUNKHOUSER T., LI K.: Parallel
+rendering with k-way replication. In PVG ’01: Proceed-
+ings of the IEEE 2001 symposium on parallel and large-
+data visualization and graphics (Piscataway, NJ, USA,
+2001), IEEE Press, pp. 75–84.
+
+[SLM∗03] STOMPEL A., LUM E., MA K.-L., AHRENS
+J., PATCHETT J.: SLIC: Scheduled linear image com-
+positing for parallel vollume rendering. Parallel Visual-
+ization and Graphics 2003, IEEE.
+
+[SMW∗04] STRENGERT M., MAGALLÓN M.,
+WEISKOPF D., GUTHE S., ERTL T.: Hierarchical
+visualization and compression of large volume datasets
+using gpu clusters. In EGPGV (2004), pp. 41–48.
+
+[SZF∗99] SAMANTA R., ZHENG J., FUNKHOUSER T., LI
+K., SINGH J. P.: Load balancing for multi-projector ren-
+dering systems. In HWWS ’99: Proceedings of the ACM
+SIGGRAPH/EUROGRAPHICS workshop on Graphics
+hardware (New York, NY, USA, 1999), ACM Press,
+pp. 107–116.
+
+[WGS04] WANG C., GAO J., SHEN H.-W.: Parallel mul-
+tiresolution volume rendering of large data sets with error-
+guided load balancing. In EGPGV (2004), pp. 23–30.
+
+[WPLM01] WYLIE B., PAVLAKOS C., LEWIS V.,
+MORELAND K.: Scalable rendering on pc clusters. IEEE
+Comput. Graph. Appl. 21, 4 (2001), 62–70.
+
+[WWH∗00] WEILER M., WESTERMANN R., HANSEN
+C., ZIMMERMANN K., ERTL T.: Level-of-detail volume
+rendering via 3d textures.
+In VVS ’00: Proceedings of
+the 2000 IEEE symposium on Volume visualization (New
+York, NY, USA, 2000), ACM Press, pp. 7–13.
+
+Figure 13: Rendering examples for the geological dataset.
+Top: full dataset. Bottom: close-up on small structures
+
+Figure 14: Load balanced decomposition of the bonsai
+dataset.
+
+c(cid:13) The Eurographics Association 2006.
+
+

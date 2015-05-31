@@ -1,0 +1,2237 @@
+To appear in the ACM SIGGRAPH conference proceedings
+
+Diffusion Curve Textures for Resolution Independent Texture Mapping
+
+Xin Sun∗ Guofu Xie†‡ Yue Dong∗ Stephen Lin∗ Weiwei Xu∗ Wencheng Wang† Xin Tong∗ Baining Guo∗
+
+∗Microsoft Research Asia
+
+† State Key Laboratory of Computer Science, ISCAS
+
+‡ GUCAS
+
+Figure 1: Our method provides a compact and explicit representation of diffusion curve images for texture mapping onto a surface. The
+sharp features and detailed color variations of textures are well preserved in the rendering results.
+
+Abstract
+
+We introduce a vector representation called diffusion curve textures
+for mapping diffusion curve images (DCI) onto arbitrary surfaces.
+In contrast to the original implicit representation of DCIs [Orzan
+et al. 2008], where determining a single texture value requires iter-
+ative computation of the entire DCI via the Poisson equation, diffu-
+sion curve textures provide an explicit representation from which
+the texture value at any point can be solved directly, while pre-
+serving the compactness and resolution independence of diffusion
+curves. This is achieved through a formulation of the DCI diffusion
+process in terms of Green’s functions. This formulation further-
+more allows the texture value of any rectangular region (e.g. pixel
+area) to be solved in closed form, which facilitates anti-aliasing.
+We develop a GPU algorithm that renders anti-aliased diffusion
+curve textures in real time, and demonstrate the effectiveness of
+this method through high quality renderings with detailed control
+curves and color variations.
+
+Keywords: vector images; diffusion curves; texture mapping and
+rendering
+
+1 Introduction
+
+Diffusion curves [Orzan et al. 2008] are powerful primitives for
+creating and editing smooth-shaded vector graphics images. They
+consist of control curves with different colors deﬁned along each
+side. Images are produced from them by diffusing the colors over
+the image space in a manner that resembles radiative heat trans-
+port. As with other vector graphics models, diffusion curves have
+a concise representation that is resolution independent and easy to
+manipulate. But what makes diffusion curves especially appealing
+
+among such techniques is its ability to model a broad array of im-
+ages with subtle shading variations. Because of its simplicity and
+representation power, diffusion curves has become a popular tool
+for graphic artists and is considered a possible addition to the Scal-
+able Vector Graphics (SVG) speciﬁcation.
+Diffusion curve images (DCIs) and other forms of vector graph-
+ics have drawn considerable attention as a representation for tex-
+ture maps [Qin et al. 2006; Nehab and Hoppe 2008; Jeschke et al.
+2009b]. In contrast to conventional bitmap textures that suffer from
+limited resolution, a DCI is resolution independent in addition to
+being compact. However, there exist two major challenges in us-
+ing them for texture mapping. First, diffusion curves provide an
+implicit representation that does not support random access. In or-
+der to obtain the DCI value at a particular point, the full image
+must be synthesized by solving a Poisson equation. Second, pix-
+els on the control curves need to be specially processed to generate
+anti-aliased results, which complicates the rendering process and
+decreases performance. Jeschke et al. [2009b] designed a real-time
+rasterization method for converting a DCI into bitmaps for anti-
+aliased texture mapping. However, very high resolution pixel grids
+are required by this approach to accurately model ﬁne-scale texture
+details, with a consequent reduction of speed. Recently, Bowers
+et al. [2011] and Pang et al. [2011] proposed schemes that sup-
+port random access but generate only an approximation to the DCI.
+Moreover, it is unclear how to perform anti-aliased rendering with
+these techniques.
+In this paper, we propose an explicit representation of diffusion
+curve images called diffusion curve textures that efﬁciently sup-
+ports random access and anti-aliased rendering, while maintaining
+the favorable characteristics of diffusion curves. The key idea of
+our work is to formulate the diffusion process of DCIs in terms of
+Green’s functions. We deﬁne weighted kernels based on Green’s
+functions along each of the control curves. These Green’s function
+kernels are ﬁxed-distance functions that describe the contribution
+of a control point to each point in the 2D image domain, while the
+kernel weights are determined from the colors deﬁned along the dif-
+fusion curves. With this Green’s function based representation, we
+show that the image value at any given point can be directly evalu-
+ated by aggregating the contributions of weighted Green’s function
+kernels along all of the control curves.
+
+1
+
+(a)(b)To appear in the ACM SIGGRAPH conference proceedings
+
+A major advantage of the Green’s function based representation is
+that the integration of Green’s function kernels for a rectangular
+image region has a closed-form solution. Diffusion curve texture
+values for arbitrary sized rectangles (e.g. pixel areas) can thus be
+computed at a constant rendering cost, an important feature for fast
+anti-aliased rendering. We develop an efﬁcient algorithm for ren-
+dering anti-aliased diffusion curve textures that incorporates a curve
+culling scheme and an adaptive sampling strategy to expedite pro-
+cessing. Since our algorithm renders all pixels in a uniform man-
+ner, it can be easily implemented on the GPU. The rendering per-
+formance depends only on image resolution and is independent of
+texture scales over surfaces and viewing directions. With this tech-
+nique, we demonstrate high quality renderings from diffusion curve
+textures for various levels of diffusion curve complexity.
+
+In summary, the contributions of this paper are
+
+• Diffusion curve textures, an explicit representation of diffu-
+sion curve images that supports random access and fast inte-
+gration.
+
+• An efﬁcient algorithm for rendering anti-aliased diffusion
+
+curve textures mapped over 3D surfaces.
+
+• A GPU implementation of the rendering method that provides
+
+real-time performance.
+
+2 Related Work
+
+Vector Images and Textures A vector image can be directly
+modeled by a set of simple vector primitives such as points, lines,
+curves, and polygons associated with colors. Qin et al. [2006;
+2008] developed techniques for rendering anti-aliased vector tex-
+tures based on the distance between pixel samples and primitives.
+Nehab and Hoppe [2008] used a lattice structure for speeding up
+the random access of vector primitives and generated anti-aliased
+results by preﬁltering and supersampling the vector primitives in
+a pixel.
+In our work, we aim for similar goals but for smoothly
+shaded images deﬁned by diffusion curves.
+
+Different vector representations have been introduced for model-
+ing smoothly shaded images. The gradient mesh is widely used
+in industry for vectorizing images that consist of smooth color re-
+gions [Lecot and Levy 2006; Sun et al. 2007; Lai et al. 2009]. Xia
+et al. [2009] segmented images into triangular patches and modeled
+the color variation inside a patch with thin plate splines. Diffu-
+sion curve images [Elder and Goldberg 2001; Orzan et al. 2008]
+and its extensions [Bezerra et al. 2010; Takayama et al. 2010] con-
+struct images or volumes by diffusing colors speciﬁed on curves
+and surfaces. Most recently, Finch et al. [2011] introduced con-
+trolled thin plate splines for authoring vector images with greater
+expressive control. These works all focus on authoring or vectoriz-
+ing raster images, rather than on how to use them for texture map-
+ping. Recently, Wang et al. [2010; 2011] presented a vector repre-
+sentation for solid textures in which the region boundary is deﬁned
+by implicit distance functions and the volumetric color variations
+are modeled by radial basis functions (RBFs). This approach, how-
+ever, is difﬁcult to extend to DCIs with non-closed control curves.
+
+Several hybrid representations combine raster textures with sharp
+vector features embedded in texels for anti-aliased texture mapping
+[Ramanarayanan et al. 2004; Sen et al. 2003; Sen 2004; Tumblin
+and Choudhury 2004; Tarini and Cignoni 2005]. Most of these
+methods store a ﬁxed number of primitives in each texel and need
+high resolution images for representing textures with high local
+complexity. Although storing various numbers of primitives in tex-
+els [Ramanarayanan et al. 2004] could avoid this problem, this leads
+to high computational costs for texture sampling and interpolation.
+
+We use the compact representation of diffusion curve textures to
+model both sharp features and smooth color variations in the image
+and render them in the same way.
+
+Diffusion Curve Images Diffusion curve images were intro-
+duced by Orzan et al. [2008] for modeling vector images with
+smooth color variations. A signiﬁcant difference of DCI from other
+vector graphics representations is that the image has to be computed
+by solving a Poisson equation deﬁned over the entire 2D domain.
+Generally, the solution at an n×n resolution can be solved by multi-
+grid methods [Bolz et al. 2003; Kazhdan and Hoppe 2008; Jeschke
+et al. 2009a] with O(n2) time complexity.
+
+To render a DCI mapped onto a surface, a na¨ıve solution is to ras-
+terize the DCI as bitmaps at speciﬁc resolutions and then render the
+result via the traditional rendering pipeline. However, a high reso-
+lution image is needed to preserve sharp features at close-up views,
+which leads to large computational and storage costs. Jeschke et
+al. [2009b] alleviated this issue by warping the texture space ac-
+cording to the current view and using a dynamic feature embedding
+algorithm to retain sharp features in the generated texture image.
+However, for diffusion curve images with rich features or complex
+curves, a high resolution solution is still needed. By contrast, our
+method directly integrates texture values in each pixel region from
+the compact Green’s function based representation and preserves
+sharp features at any resolution. With the two acceleration schemes
+presented in the paper, the time complexity of our rendering algo-
+rithm is proportional to the screen resolution and independent of
+model and image complexity.
+
+Bowers et al. [2011] designed a ray tracing based approach to sim-
+ulate DCIs. By reformulating the problem to be equivalent to ﬁnal
+gathering in global illumination, the image values can be evalu-
+ated by GPU based stochastic raytracing. They also extended the
+curve attributes of DCI to support additional authoring tasks. Most
+recently, Pang et al. [2011] used mean value coordinates interpo-
+lation on a triangle mesh to generate images similar in appearance
+to DCIs. Both methods provide only approximate solutions to the
+DCI. Also, it is unclear how to efﬁciently perform integration over
+regions with these methods, which is a requirement for texture anti-
+aliasing. Unlike these approximation techniques, our method pro-
+vides an accurate solution for diffusion curve images and supports
+random access as well as fast integration.
+
+Green’s Functions Green’s functions have been applied in var-
+ious graphics applications. D’Eon and Irving [2011] used a quan-
+tized Green’s function for rendering light diffusion in translucent
+materials. Lipman et al. [2008] presented Green Coordinates for
+mesh deformation based on the Green’s function for the Laplacian.
+An analytic integration of the Green’s function over a closed poly-
+hedral cage is used for Green Coordinates computation. Farbman et
+al. [2011] modeled the solution of the Poisson equation in the im-
+age domain as the convolution of a Green’s function and the image
+gradients. They then approximated the convolution with specially
+designed convolution pyramids. Our method adapts the Green’s
+function for the Laplacian in 2D space to model and render diffu-
+sion curve images, for which the underlying Poisson equation can
+be accurately modeled by Green’s function kernels deﬁned on con-
+trol curves. Moreover, we derive an analytic solution for integrating
+the 2D Green’s function kernel contributions over a rectangular re-
+gion and present a method to compute this in real time.
+
+3 Diffusion Curve Textures
+
+In this section, we brieﬂy review Green’s functions, and then de-
+rive a representation of diffusion curves based on Green’s functions
+
+2
+
+To appear in the ACM SIGGRAPH conference proceedings
+
+from which diffusion curve images can be directly solved.
+
+3.1 Preliminaries on Green’s Functions
+
+Green’s functions are a useful tool for solving inhomogeneous dif-
+ferential equations with boundary conditions [Bayin 2006]. For the
+Laplacian operator ∆, a Green’s function G (x, x(cid:48)) at a point x(cid:48)
+satisﬁes the following equation:
+
+∆G(cid:0)x, x
+
+(cid:48)(cid:1) = δ(cid:0)(cid:13)(cid:13)x − x
+(cid:48)(cid:13)(cid:13)(cid:1)
+
+where δ is the Dirac delta function.
+For a scalar function u (x) that is twice continuously differentiable
+on region D in R2, Green’s second identity relates a double integral
+over D to a line integral over the region boundary:
+
+(cid:90)(cid:90)
+(cid:0)u(cid:0)x
+(cid:48)(cid:1) ∆G(cid:0)x, x
+(cid:32)
+(cid:48)(cid:1) ∂G(cid:0)x, x(cid:48)(cid:1)
+(cid:73)
+u(cid:0)x
+
+D
+
+∂n (x(cid:48))
+
+(cid:48)(cid:1) − G(cid:0)x, x
+− G(cid:0)x, x
+
+(cid:48)(cid:1) ∆u(cid:0)x
+(cid:48)(cid:1) ∂u(cid:0)x(cid:48)(cid:1)
+
+(cid:48)(cid:1)(cid:1) dx
+(cid:33)
+
+(cid:48)
+dx
+
+(cid:48)
+
+∂n (x(cid:48))
+
+=
+
+∂D
+
+(1)
+
+(2)
+
+where n (x) is the normal direction on the boundary ∂D.
+The following expression for u (x) can be formulated from Eq. (1):
+
+u(cid:0)x
+
+(cid:48)(cid:1) ∆G(cid:0)x, x
+
+(cid:48)(cid:1) dx
+
+(cid:90)(cid:90)
+
+D
+
+(cid:48)
+
+= u (x) .
+
+(3)
+
+From Eq. (2) and Eq. (3), we can derive Green’s third identity to
+evaluate u (x):
+
+(cid:90)(cid:90)
+(cid:48)(cid:1) ∆u(cid:0)x
+G(cid:0)x, x
+(cid:48)(cid:1) ∂G(cid:0)x, x(cid:48)(cid:1)
+u(cid:0)x
+
+(cid:48)(cid:1) dx
+− G(cid:0)x, x
+
+D
+
+(cid:48)
+
+∂n (x(cid:48))
+
+u (x) =
+
+(cid:32)
+
+(cid:73)
+
++
+
+∂D
+
+(cid:48)(cid:1) ∂u(cid:0)x(cid:48)(cid:1)
+
+∂n (x(cid:48))
+
+(cid:33)
+
+(cid:48)
+dx
+
+.
+
+(4)
+
+3.2 Green’s Function Kernels
+
+We utilize Green’s functions to solve for values in a diffusion curve
+image. Diffusion curves [Orzan et al. 2008; Jeschke et al. 2009a]
+represent an image as a harmonic function u (x) that satisﬁes the
+Laplace equation:
+
+∆u (x) = 0
+
+(5)
+
+with boundary conditions Cl, Cr speciﬁed on the two sides of each
+control curve B:
+
+(cid:48)(cid:1) |x(cid:48)∈∂D = {Cl
+u(cid:0)x
+
+(cid:48)(cid:1) , Cr
+(cid:0)x
+
+(cid:48)(cid:1)}|x(cid:48)∈B.
+(cid:0)x
+
+(6)
+
+As illustrated in Fig. 2(a), we deﬁne boundary normals to be ori-
+ented outwards from their domain (i.e.
+toward the other side of
+B) and the normal of the control curve B as n (x(cid:48)) = nr (x(cid:48)) =
+−nl (x(cid:48)).
+With Eq. (5) and Eq. (6), we can simplify Eq. (4) to
+
+u (x) =
+
+∂D
+
+(cid:48)
+dx
+
+(cid:32)
+(cid:32)
+(cid:32)
+(cid:32)
+
+∂n (x(cid:48))
+
+(cid:48)(cid:1) ∂G(cid:0)x, x(cid:48)(cid:1)
+u(cid:0)x
+(cid:48)(cid:1) ∂G(cid:0)x, x(cid:48)(cid:1)
+(cid:0)x
+(cid:48)(cid:1) ∂G(cid:0)x, x(cid:48)(cid:1)
+(cid:0)x
+(cid:48)(cid:1) ∂G(cid:0)x, x(cid:48)(cid:1)
+C(cid:0)x
+
+∂nr (x(cid:48))
+
+∂nl (x(cid:48))
+
+Cr
+
+Cl
+
+∂n (x(cid:48))
+
+(cid:48)(cid:1)(cid:33)
+− ∂u(cid:0)x(cid:48)(cid:1)
+G(cid:0)x, x
+(cid:48)(cid:1)(cid:33)
+− ∂u(cid:0)x(cid:48)(cid:1)
+G(cid:0)x, x
+(cid:48)(cid:1)(cid:33)
+− ∂u(cid:0)x(cid:48)(cid:1)
+G(cid:0)x, x
+(cid:48)(cid:1)(cid:33)
+(cid:48)(cid:1) G(cid:0)x, x
+− E(cid:0)x
+
+∂nr (x(cid:48))
+
+∂nl (x(cid:48))
+
+(cid:48)
+dx
+
+(cid:48)
+
+dx
+
+(cid:48)
+dx
+
+∂nr (x(cid:48))
+
+(cid:73)
+(cid:90)
+(cid:90)
+(cid:90)
+
+B
+
+B
+
+B
+
+=
+
++
+
+=
+
+,
+
+(7)
+
+3
+
+Figure 2: A diffusion curve texture deﬁned by two control curves:
+an S-shaped curve, and a curve along the image boundary. (a) Con-
+trol curves with boundary conditions (0.75 for the right S-shaped
+boundary, 0.5 for the left S-shaped boundary and the image bound-
+aries). (b) Proﬁle of Green’s function kernel G (x, x(cid:48)) from one
+point on a control curve.
+(c) Proﬁle of Green’s function kernel
+Gn (x, x(cid:48)) from one point on a control curve. (d) Diffusion curve
+image computed from all of the Green’s function kernels. (e) Image
+generated from only the Green’s function kernels G (x, x(cid:48)). (f) Im-
+age generated from only the Green’s function kernels Gn (x, x(cid:48)).
+In the rightmost two columns, red indicates positive values, while
+blue indicates negative values.
+∂u(x(cid:48))
+where C (x(cid:48)) = −Cl (x(cid:48))+Cr (x(cid:48)) , E (x(cid:48)) =
+∂nr(x(cid:48)) .
+Eq. (7) indicates that u (x) at any point within the entire domain D
+can be evaluated through computations only on the control curves.
+Since the Green’s function is symmetric with respect to x and x(cid:48)
+(i.e. G (x(cid:48), x) = G (x, x(cid:48))), we can view Eq. (7) in terms of two
+Green’s function based kernels deﬁned along the control curves,
+instead of over the domain D. Therefore, we explicitly represent a
+diffusion curve image with the two Green’s function based kernels
+, and their weights C (x(cid:48))
+G (x, x(cid:48)) and Gn (x, x(cid:48)) =
+and E (x(cid:48)) deﬁned along the control curves:
+(cid:0)x
+(cid:48)(cid:1) G(cid:0)x, x
+(cid:48)(cid:1) − Ei
+(cid:48)(cid:1) Gn
+
+∂u(x(cid:48))
+∂nl(x(cid:48)) +
+
+(cid:48)(cid:1)(cid:1) dx
+
+∂G(x,x(cid:48))
+∂n(x(cid:48))
+
+(cid:0)x, x
+
+(cid:0)Ci
+
+(cid:88)
+
+(cid:0)x
+
+u (x) =
+
+(cid:90)
+
+(8)
+
+(cid:48)
+
+.
+
+i
+
+Bi
+
+=
+
+(9)
+
+d x
+
+Gn
+
+1
+2π
+
+∂n (x(cid:48))
+
+(cid:48)(cid:1) =
+
+(cid:0)x, x
+
+In our work, we employ the Green’s function G (x, x(cid:48)) in R2:
+
+G(cid:0)x, x
+∂G(cid:0)x, x(cid:48)(cid:1)
+
+with the corresponding normal derivative Gn (x, x(cid:48)):
+
+(cid:48)(cid:1) =
+d G(cid:0)x, x(cid:48)(cid:1)
+
+ln(cid:0)(cid:13)(cid:13)x − x
+(cid:48)(cid:13)(cid:13)(cid:1)
+(cid:48)(cid:1) =
+· n(cid:0)x
+where n (x(cid:48)) = (nx, ny) and (ˆx, ˆy) = x − x(cid:48).
+Note that this explicit representation is different from the original
+implicit diffusion curves representation that is based on the Poisson
+equation. First, our method allows evaluation at only the point it-
+self without considering other areas, while a linear system for the
+Poisson equation must be solved over the entire domain to com-
+pute the value at a single point. Second, unlike the explicit solution
+provided by Green’s function kernels, the original implicit repre-
+sentation requires discretization of the domain to solve the Poisson
+equation, which intrinsically enforces a tradeoff between rendering
+quality and computational performance.
+
+ˆx nx + ˆy ny
+2π (ˆx2 + ˆy2)
+
+(10)
+
+N(x’)Nr(x’)Nl(x’)u(x)|x∈DCl(x’)/ El(x’)Cr(x’)/ Er(x’)×0.5×256×4x’(a)(b)(c)(d)(e)(f)B(x’)To appear in the ACM SIGGRAPH conference proceedings
+
+(cid:90)(cid:90)
+
+Fig. 2(b)(c) illustrate the two Green’s function kernels deﬁned at
+one point on the control curve, where G is isotropic while Gn is
+anisotropic. As shown in Fig. 2 (e)(f), the contributions of the two
+kernels deﬁned along the curve result in the global low frequency
+color variation and the high frequency color change at boundaries,
+respectively.
+To calculate E (x(cid:48)), we note that for a closed domain D with
+H¨older continuous boundary values u (x(cid:48))|x(cid:48)∈∂D, the solution for
+u (x) is unique. So we solve
+
+(cid:48)(cid:1)(cid:33)
+G(cid:0)x, x
+∂nl(x(cid:48)) and ∂u(x(cid:48))
+and compute the values of E (x(cid:48)) from ∂u(x(cid:48))
+∂nr(x(cid:48)) . We
+note that to solve the diffusion equation over an image, boundary
+conditions at the image borders (or beyond the image borders) must
+be speciﬁed. So in practice we always place a control curve at or
+beyond the image borders for a given diffusion curve image.
+
+(cid:48)(cid:1) − ∂u(cid:0)x(cid:48)(cid:1)
+(cid:0)x, x
+
+, x ∈ ∂D (11)
+
+(cid:48)(cid:1) Gn
+
+u(cid:0)x
+
+∂n (x(cid:48))
+
+u (x) =
+
+(cid:32)
+
+(cid:48)
+dx
+
+(cid:73)
+
+∂D
+
+4 Rendering with Diffusion Curve Textures
+
+Given the Green’s function kernels on the control curves, the har-
+monic function u (x) can be constructed according to Eq. (8). For
+rendering purposes such as anti-aliasing, we wish to evaluate the
+integral of u (x) over a rectangular region R instead of at just an
+individual point x:
+
+φ (R) =
+
+u (x) dx.
+
+(12)
+
+R
+
+Rendering with this function involves three components: integrat-
+ing over the region R, integrating along each control curve B, and
+accumulating contributions from all the control curves. We address
+each of these components in this section.
+
+4.1 Integration over a Rectangle
+
+i
+
+(cid:48)
+
+R
+
+Bi
+
+Ci
+
+−
+
+(cid:90)
+
+φ (R) =
+
+(cid:48)(cid:1) dx
+(cid:48)(cid:1) dx
+
+ dx
+ dx
+
+The integral of u (x) in Eq. (8) over a region R as in Eq. (12)
+can be expressed in terms of integrations of the Green’s function
+kernels G (x, x(cid:48)) and Gn (x, x(cid:48)) over the rectangular region R =
+{x ∈ (x0, x1) , y ∈ (y0, y1)}:
+(cid:88)
+(cid:90)
+(cid:90)(cid:90)
+(cid:88)
+(cid:90)(cid:90)
+
+(cid:48)(cid:1) Gn
+(cid:0)x
+(cid:0)x, x
+(cid:0)x
+(cid:48)(cid:1) G(cid:0)x, x
+A closed-form integral FG (R, x(cid:48)) =(cid:82)(cid:82)
+(cid:0)R, x
+A closed-form integral FGn (R, x(cid:48)) = (cid:82)(cid:82)
+
+(14)
+
+(15)
+
+ˆy
+ˆx
+
++ ˆy2 arctg
+
+ˆx
+ˆy
+
+.
+
+this Green’s function over a rectangular region R:
+
+R G (x, x(cid:48)) dx exists for
+
+HG (ˆx, ˆy) = −3 ˆxˆy + ˆxˆy ln
+
+R Gn (x, x(cid:48)) dx like-
+
+ˆx2 + ˆy2(cid:17)
+
+(cid:48)(cid:1) =
+
+(−1)i+j
+
++ ˆx2 arctg
+
+(cid:88)
+
+i,j∈{0,1}
+
+HG (ˆx, ˆy)
+
+(cid:16)
+
+(13)
+
+FG
+
+Ei
+
+4π
+
+Bi
+
+R
+
+(cid:48)
+
+i
+
+wise exists for Gn:
+
+(cid:0)R, x
+
+(cid:48)(cid:1) =
+
+(cid:88)
+
+FGn
+
+(−1)i+j
+
+i,j∈{0,1}
+
+2π
+
+HGn (ˆx, ˆy, nx, ny) = ny ˆy arctg
+
++ nx ˆx arctg
+
+(cid:18) ˆx
+
+(cid:19)
+
+ˆy
+
+HGn (ˆx, ˆy, nx, ny)
+
+(cid:18) ˆy
+ˆx2 + ˆy2(cid:17)
+
+ˆx
+
+(cid:16)
+
++
+
+1
+2
+
+(ny ˆx + nx ˆy) ln
+
+(cid:19)
+
+(16)
+
+(17)
+
+4
+
+where x = (x, y), x(cid:48) = (x(cid:48), y(cid:48)), n (x(cid:48)) = (nx, ny), and (ˆx, ˆy) =
+x − x(cid:48). Detailed derivations of Eq. (14) and Eq. (16) are provided
+in Appendix A.
+
+Eq. (14) and Eq. (16) are derived for an axially aligned rectangular
+region, but are also valid for rotated rectangles since the Green’s
+function G (x, x(cid:48)) is rotationally symmetric about x(cid:48). We note that
+though G (x, x(cid:48)) has a singular point at x = x(cid:48), it does not affect
+the evaluation of HG (ˆx, ˆy) and HGn (ˆx, ˆy, nx, ny). An important
+feature of the closed-form integrals FG (R, x(cid:48)) and FGn (R, x(cid:48)) is
+that the computational load is constant for different sizes of R, in
+contrast to sampling schemes which generally require greater com-
+putation for larger regions.
+With the control curve representation, we can compute Eq. (12) as
+
+(cid:0)Ci
+
+(cid:0)x
+(cid:48)(cid:1) FG
+
+(cid:0)R, x
+
+(cid:48)(cid:1) + Ei
+
+(cid:0)x
+(cid:48)(cid:1) FGn
+
+(cid:0)R, x
+
+(cid:48)(cid:1)(cid:1) dx
+
+(cid:48)
+
+(cid:90)
+
+(cid:88)
+
+φ (R) =
+
+. (18)
+
+i
+
+Bi
+
+To rapidly solve Eq. (18), integration along control curves B and
+accumulation of control curve contributions need to be performed
+efﬁciently. These two problems are addressed in Section 4.2 and
+Section 4.3.
+
+4.2 Adaptive Sampling on Control Curves
+
+To efﬁciently evaluate φ (R) in Eq. (18), we compute a piece-
+wise constant approximation with respect to a set of sample points
+
+i,j
+
+(cid:88)
+
+(cid:8)x(cid:48)
+(cid:9) along each control curve Bi:
+(cid:16)
+(cid:16) ¯φC
+(cid:16)
+(cid:17)(cid:17)
+φ (R) ≈(cid:88)
+where l(cid:0)x(cid:48)
+(cid:1) is the arc length between x(cid:48)
+(cid:0)x(cid:48)
+(cid:1)
+(cid:0)x(cid:48)
+(cid:0)x(cid:48)
+(cid:0)R, x(cid:48)
+(cid:1) FGn
+(cid:0)R, x(cid:48)
+(cid:1) FG
+tively. Sampling with a small, uniform value of l(cid:0)x(cid:48)
+
+(cid:17) − ¯φE
+(cid:1)
+(cid:0)x(cid:48)
+
+are weighted
+
+and Ei
+
+and
+Ci
+
+(cid:48)
+x
+i,j
+
+(cid:1)
+
+and
+
+¯φE
+
+¯φC
+
+(cid:16)
+
+(cid:48)
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+x
+
+l
+
+j
+
+i
+
+i,j and x(cid:48)
+kernels
+
+i,j+1,
+of
+respec-
+
+(cid:1)
+(cid:1) would be
+
+i,j
+
+i,j
+
+(cid:17)
+
+(19)
+
+(cid:48)
+x
+i,j
+
+inefﬁcient over different levels of detail, so we propose an adaptive
+sampling scheme.
+Our adaptive scheme aims to sample points such that the error in
+the piecewise constant approximation of Bi between neighbors x(cid:48)
+i,j
+and x(cid:48)
+i,j+1 falls below a given bound. We approximate this by se-
+lecting sample points according to
+
+(cid:16)
+
+(cid:12)(cid:12)(cid:12)(cid:16) ¯φS
+
+(cid:48)
+i,j+1
+
+x
+
+(cid:17) − ¯φS
+
+(cid:16)
+
+(cid:17)(cid:17)
+
+(cid:48)
+x
+i,j
+
+/ ¯φS
+
+(cid:48)
+i,j
+
+x
+
+(cid:16)
+
+(cid:17)(cid:12)(cid:12)(cid:12) < α, S ∈ {C, E}
+
+(20)
+
+l
+
+S
+
+x
+
+¯φS
+
+(cid:48)
+i,j
+
+(cid:48)
+x
+i,j
+
+(cid:48)
+x
+i,j
+
+i,j+1:
+
+(cid:48)
++ ¯φ
+S
+
+, S ∈ {C, E}
+
+i,j, the next sample x(cid:48)
+
+where α denotes a user-speciﬁed bound.
+For a given sample point x(cid:48)
+i,j+1 cannot be
+determined from Eq. (20) without evaluating different candidate
+points. To avoid this inefﬁciency, we use the ﬁrst order differen-
+i,j to approximate the value at x(cid:48)
+tial at x(cid:48)
+(cid:17) ≈ ¯φS
+(cid:16)
+(cid:17)
+(cid:16)
+(cid:16)
+(cid:17)
+(cid:1)/∂t(cid:0)x(cid:48)
+(cid:0)x(cid:48)
+(cid:1) = ∂ ¯φS
+(cid:0)x(cid:48)
+(cid:48)
+x
+i,j+1
+l(cid:0)x(cid:48)
+(cid:1) from α:
+where ¯φ(cid:48)
+gent direction along the curve. We then can determine the arc length
+(cid:110)(cid:12)(cid:12)(cid:12) ¯φS
+(cid:16)
+(cid:17)
+(cid:16)
+(cid:17)
+(cid:16)
+can determine l(cid:0)x(cid:48)
+(cid:1) through calculations only at x(cid:48)
+C and ¯φ(cid:48)
+Since ¯φ(cid:48)
+a control curve Bi, we start by placing the ﬁrst sample x(cid:48)
+based on computed values of l(cid:0)x(cid:48)
+arbitrary endpoint, then iteratively place subsequent samples x(cid:48)
+
+E can be solved analytically (see Appendix B), we
+i,j. To sample
+i,0 at an
+i,j+1
+
+(cid:16)
+(cid:17)
+(cid:1) and t(cid:0)x(cid:48)
+(cid:17)(cid:12)(cid:12)(cid:12) , S ∈ {C, E}(cid:111)
+
+(cid:1) until reaching the end.
+
+(cid:1) is the tan-
+
+= α min
+
+(cid:48)
+/ ¯φ
+S
+
+(cid:48)
+x
+i,j
+
+(cid:48)
+x
+i,j
+
+(cid:48)
+x
+i,j
+
+(22)
+
+(21)
+
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+i,j
+
+l
+
+.
+
+i,j
+
+To appear in the ACM SIGGRAPH conference proceedings
+
+Texture
+
+Figure
+
+Porcelain
+Zephyr
+Frog
+
+Coffee cup
+
+Wood
+Dragon
+
+Fig. 1 (a)
+Fig. 1 (b)
+
+Fig. 4
+
+Fig. 9 (a)
+Fig. 9 (b)
+Fig. 9 (c)
+
+Number
+of curves
+37,020
+
+327
+820
+3,321
+2,698
+160
+
+Storage
+(KBytes)
+
+2962
+26
+66
+266
+216
+13
+
+Perf.
+(ms)
+98
+36
+39
+49
+60
+43
+
+Fitting
+
+(s)
+0
+
+0.46
+0.96
+0.87
+660
+0.05
+
+Table 1: Statistics and rendering performance for the texture data
+shown in this paper. All images shown in this paper are rendered
+with a resolution of 800 × 600 and resized to ﬁt the pages.
+efﬁciently removed for a given integration region prior to adaptive
+sampling.
+
+5 Experimental Results and Discussions
+
+Texture generation Given a diffusion curve image, the texture is
+generated by solving Eq. (11) with the normal derivatives ∂u(x(cid:48))
+∂nl(x(cid:48))
+and ∂u(x(cid:48))
+∂nr(x(cid:48)) . We uniformly sample a number of points {xi} along
+the control curves, with a distance of l between each pair of adjacent
+points. We denote the left and right sides of the curve at point xi as
+i and x1
+x0
+
+i respectively. Then Eq. (11) is evaluated as
+
+u(cid:0)xs
+
+i
+
+u
+(cid:88)
+(cid:1) ≈(cid:88)
+u
+(cid:16)
+(cid:88)
+
+j(cid:54)=i
+
++
+
+k
+
+l
+
+xk
+i
+
+k
+
+xk
+j
+
+(cid:16)
+
+(cid:16)
+(cid:17)
+(cid:17) ¯Gn (s, k) − ∂u
+
+xs
+i , xk
+
+Gn
+
+j
+
+(cid:17) − ∂u
+(cid:16)
+(cid:17)
+
+xk
+i
+
+∂nk (xi)
+
+(cid:16)
+
+(cid:16)
+
+xk
+j
+
+(cid:17)
+.
+
+G
+
+xs
+i , xk
+
+j
+
+∂nk (xj)
+
+¯G (l)
+
+(23)
+
+(cid:17)
+
+¯G and ¯Gn are the analytic integrals of G (x, x(cid:48)) and Gn (x, x(cid:48))
+given in Eq. (9) and Eq. (10) respectively, with x → x(cid:48) to avoid the
+singularity:
+
+l/2(cid:90)
+
+¯G (l) =
+
+1
+2π
+
+ln |x| dx =
+
+1
+2π
+
+−l + l ln
+
+l
+2
+
+(24)
+
+l/2
+
+¯Gn (s, k) = (−1)s+k lim
+x→0+
+
+1
+2π
+
+x
+
+x2 + y2
+
+dy =
+
+(−1)s+k
+
+2
+
+.
+
+(25)
+
+(cid:19)
+
+(cid:18)
+l/2(cid:90)
+
+l/2
+
+For regions enclosed by a curve with constant color values, such as
+in the blue and white porcelain of Fig. 1 (a), this evaluation pro-
+cedure can be skipped.
+If the texture includes regions enclosed
+by a curve with color variations, as exhibited in the coffee cup of
+Fig. 9 (a), then each of these regions can be evaluated indepen-
+dently.
+To derive a diffusion curve representation from a natural image,
+such as Fig. 9 (b), we trace the edges in the image to obtain the
+control curves and then solve for their colors and normal derivatives
+from colors sampled throughout the image:
+
+u (˜xi) ≈(cid:88)
+where points {˜xi} are uniformly sampled over the image, exclud-
+ing points on the control curves. Since colors need to be ﬁt in ad-
+dition to the normal derivatives and |{˜xi}| (cid:29) |{xi}|, this process
+requires much time.
+
+(cid:17) (26)
+
+(cid:17) − ∂u
+
+u
+
+∂nk (xj)
+
+˜xi, xk
+j
+
+˜xi, xk
+j
+
+(cid:16)
+
+(cid:17)
+
+(cid:16)
+
+(cid:16)
+
+(cid:16)
+
+(cid:17)
+
+xk
+j
+
+xk
+j
+
+Gn
+
+j,k
+
+G
+
+l
+
+Rendering on GPUs For high performance rendering of diffu-
+sion curve textures, we developed a GPU algorithm that utilizes the
+OpenGL pipeline to render each frame, with texture fetching and
+computation implemented with NVidia CUDA [NVIDIA 2011].
+
+5
+
+Figure 3: Control curve sampling. (a) Uniform sampling with more
+than 500 samples along the control curve. (b) Adaptive sampling
+requires only about 10 points to produce similar results at the blue
+point (α = 0.02).
+
+Figure 4: Culling of control curves. (a) The control curves in blue
+are enclosed by the control curve in red, so integration regions out-
+side the red boundary can be computed independently of the blue
+curves and the inner boundary values of the red curve.
+(b) Ar-
+eas within the red control curve are unaffected by exterior control
+curves and the outer boundary values of the red curve.
+
+(cid:0)x(cid:48)
+
+(cid:1) and ¯φE
+
+(cid:0)x(cid:48)
+
+(cid:1) individually instead of
+
+i,j
+
+i,j
+
+In this adaptive sampling scheme, we evaluate the sampling inter-
+vals with respect to ¯φC
+together as the single term shown in Eq. (19). Since the two Green’s
+function kernels produce different effects as shown in Fig. 2, we
+wish to bound each of their piecewise constant approximation er-
+rors, so we set the arc length in Eq. (22) to the minimum value
+computed from among the two. As shown in Fig. 3, this adaptive
+sampling scheme greatly reduces the sampling rate while maintain-
+ing the rendering quality similar to that of dense uniform sampling.
+
+4.3 Culling of control curves
+
+In Eq. (18), φ is computed from all of the control curves, which can
+be expensive when there is a large number of curves, even with the
+adaptive sampling scheme. However, it is often possible to exclude
+many control curves without compromising rendering quality.
+
+Shown in Fig. 4(a), control curves that are enclosed by another con-
+trol curve do not contribute to image values beyond the outer curve.
+Only the outside boundary values of the outer curve need to be con-
+sidered; the inside boundary values and the inner curves can be dis-
+regarded. Likewise, regions enclosed by a control curve, as shown
+in Fig. 4(b), are unaffected by exterior curves.
+
+To facilitate culling, we identify areas enclosed by control curves,
+and organize them hierarchically according to containment relation-
+ships. With this preprocessing, unnecessary control curves can be
+
+(a)(b)(a)(b)To appear in the ACM SIGGRAPH conference proceedings
+
+Figure 5: A vase covered with diffusion curve textures of different
+complexity. From left to right, the numbers of control curves are
+5K, 10K, 20K and 37K respectively.
+
+Number of
+
+control curves
+
+Adaptive sampling
+with curve culling
+Adaptive sampling
+w/o curve culling
+Uniform sampling
+w/o curve culling
+Resulting image
+
+in Fig. 5
+
+5,309
+
+10,747
+
+20,505
+
+37,020
+
+0.020 s
+
+0.043 s
+
+0.076 s
+
+0.098 s
+
+0.600 s
+
+1.763 s
+
+4.104 s
+
+7.938 s
+
+39.60 s
+
+114.6 s
+
+242.1 s
+
+444.5 s
+
+(a)
+
+(b)
+
+(c)
+
+(d)
+
+Table 2: Rendering performance with different numbers of control
+curves and different rendering algorithms.
+
+The geometry, lighting, material and viewpoint are loaded into the
+OpenGL pipeline. The control curves are loaded into the global
+memory of CUDA. To render a frame, we compute the transforma-
+tion, culling, shadow testing, and material shading in the OpenGL
+pipeline. At the beginning of the fragment shader, we apply a sep-
+arate pass to extract the texture coordinates and the corresponding
+DDX and DDY for each fragment. Then we switch to CUDA pro-
+cessing with this data. The texture coordinates represent the center
+of the integration region, while the DDX and DDY represent the
+orientation of the region as well as the length of the two correspond-
+ing dimensions. After that, we integrate the texture value for each
+pixel with the algorithm described above. Finally, the integration
+values are transported back to the OpenGL pipeline as a texture for
+subsequent shading in the fragment shader.
+
+Performance We implemented our algorithm on a PC with two
+Intel Xeon E5620 2.44 GHz CPUs and an NVidia GeForce GTX
+480 graphics card with 1 GB of graphics memory. Table 1 lists
+the statistics and rendering performance for all of the texture data.
+As shown in the table, our method renders all of these examples
+in real time. Diffusion curve textures are generated from DCIs at
+interactive rates. With a natural image such as the wood in Fig. 9 (b)
+as input, diffusion curve texture generation takes substantially more
+time as previously discussed.
+
+To test the performance of our rendering method for diffusion curve
+textures with different levels of complexity, we constructed four dif-
+fusion curve textures with different numbers of control curves (5K,
+10K, 20K and 37K respectively) and mapped them onto the same
+vase model as shown in Figure 5. To examine the effects of the
+two rendering acceleration schemes, we rendered each texture us-
+ing three implementations: full algorithm, without curve culling,
+and without both adaptive sampling and curve culling. Table 2 lists
+the performance results for the four textures. It shows that the adap-
+tive sampling scheme provides a 10× speedup over the implemen-
+tation without it, while the curve culling scheme further improves
+the rendering speed by two orders of magnitude. Note that both
+
+Figure 6: Rendering for close-up views. The top row rendered with
+our diffusion curve texture maintains sharp boundaries. The middle
+row rendered with a rasterized texture of resolution 4096 × 4096
+exhibits blur when zooming in. The bottom row shows that the sam-
+pling rates with our rendering method remain almost unchanged
+through the zoom sequence. Our rendering times are 76 ms, 76 ms,
+70 ms, and 64 ms from left to right.
+
+acceleration schemes are based on the explicit texture representa-
+tion proposed in this paper. With these two schemes, the rendering
+performance of our method decreases sub-linearly as the number of
+control curves increases.
+
+The rendering cost is linearly dependent on the number of curve
+sampling points, as the most computationally expensive part in ren-
+dering is the evaluation of Green’s function kernels. Culling of con-
+trol curves signiﬁcantly reduces this cost without requiring much
+overhead. The number of sampling points is also considerably less-
+ened by our adaptive sampling scheme, which is based on the ob-
+servation that the ﬁnal color of a pixel is inﬂuenced more by inter-
+secting or nearby control curves than by distant ones. The adap-
+tive scheme densely samples along neighboring control curves and
+sparsely samples along curves farther away. This leads to artifact-
+free textures without the prohibitively heavy rendering cost that
+would result from dense sampling of all the control curves.
+
+Anti-aliasing For a given diffusion curve texture, our method can
+compute the anti-aliased texture value for each pixel in almost con-
+stant time. As a result, the rendering performance of our method
+is proportional to only the screen resolution and independent of the
+viewpoint and model complexity. The top row of Figure 6 displays
+rendering results of our method for the vase under close-up views
+that magnify the porcelain texture mapped over the surface. With
+just 3 MB of texture data, our method maintains the resolution inde-
+pendence of diffusion curve images and preserves the sharp edges
+of the texture pattern in all of the close-up views. By contrast, the
+results rendered from a 4096 × 4096 raster texture cannot main-
+tain the sharp edges of the texture pattern in the most close-up view
+(shown in the second row of Figure 6). The bottom row of Fig-
+ure 6 displays grayscale maps that encode the computational cost
+for each pixel, which is determined by the number of control curve
+samples that contribute to it. As the viewpoint moves closer to the
+object, the computational cost of corresponding pixels is almost un-
+changed, since the pixel areas generally receive contributions from
+the same control curve samples.
+
+Figure 7 compares the rendering results generated by our method
+and the anti-aliased results rendered from a mipmapped raster tex-
+
+6
+
+(a)(b)(c)(d)To appear in the ACM SIGGRAPH conference proceedings
+
+(a)
+
+(b)
+
+(c)
+
+Figure 8: (a) Texture reconstructed with a resolution of 8192 ×
+8192, then downsampled to resolution of 1024 × 1024. (b) Texture
+reconstructed by Jeschke’s GPU solver [2009a] with a resolution
+of 1024 × 1024. (c) Texture reconstructed by the Green’s function
+kernels with a resolution of 1024 × 1024.
+
+Discussion With diffusion curve textures, texture mapping with
+DCIs can be done without a predeﬁned resolution. Sharpness is
+maintained at close inspection, while smooth anti-aliasing is pro-
+vided with miniﬁed viewing. Such cases are challenging for pre-
+vious methods, particularly with highly detailed textures for which
+more than one control curve may exist in a pixel.
+In Jeschke et
+al. [2009b], the texture is warped according to the view so that it
+provides sufﬁcient resolution in magniﬁed areas while reducing the
+resolution in miniﬁed areas. While this works well for sparsely
+distributed control curves, aliasing problems arise in miniﬁcation
+for pixels that include multiple curves, as exempliﬁed in Fig. 8.
+For extreme magniﬁcation, Jeschke et al. [2009b] also proposed
+a dynamic feature embedding technique that produces crisp, anti-
+aliased curve details, but requires a reconstructed texture with ade-
+quate resolution. With that approach, the missing area between two
+control curves within a pixel cannot be recovered in magniﬁcation,
+as shown in Fig. 8 of [Jeschke et al. 2009b], since this information is
+not present in the rasterized image. By contrast, our method avoids
+such issues from detailed and dense control curves, as it does not
+need to rasterize with a ﬁxed resolution.
+
+6 Conclusion
+
+We presented diffusion curve textures based on Green’s functions
+for anti-aliased texture mapping of diffusion curve images. Our
+technique yields exact reconstructions of DCIs, and our GPU im-
+plementation provides real-time rendering performance.
+
+The most signiﬁcant limitation of diffusion curve textures is the
+overhead for calculating the weights of the Green’s function ker-
+nels, which depends on normal derivatives along the control curves.
+While diffusion curve images may be authored using the system
+in [Orzan et al. 2008], this overhead in converting diffusion curves
+into our representation causes a delay before the diffusion curve
+texture can be used. Our technique nevertheless achieves interac-
+tive performance with a DCI as input, and we leave real-time tex-
+ture generation from dynamic DCI input for future work. Faster
+processing may potentially be obtained by further optimizing the
+scheme for control curves culling, which can greatly reduce the sys-
+tem scale, and by developing a GPU implementation.
+
+We also will seek to speed up other components of the rendering
+algorithm. For example, our current method for culling control
+curves considers only closed boundaries. Additionally removing
+open curve segments that are distant from the rendering point could
+lead to further computational savings. We also would like to extend
+our framework to other differential operators that may be used in
+vector image creation, such as the bilaplacian. Diffusion surfaces
+are another interesting extension, as Green’s function kernels can
+be derived similarly for them.
+
+Figure 7: Rendering for zoomed-out views. The top row is rendered
+with our diffusion curve texture. The middle row is rendered with
+a rasterized texture of resolution 8192 × 8192, which generates
+results similar to our method. The bottom row shows the sampling
+rates with our method. Our rendering times are 74 ms, 76 ms, 82
+ms, and 88 ms from left to right.
+
+ture under a series of zoomed-out views. In these zoom-outs, each
+pixel covers a relatively large region in the texture domain and thus
+contains many sharp, detailed features. For this texture miniﬁ-
+cation case, our solution generates results similar to the conven-
+tional mipmap solution. However, our method is based on a com-
+pact vector representation that needs no extra storage and compu-
+tation for this rendering task, while the raster-based solution needs
+a 8192 × 8192 bitmap to represent all the high frequency details
+and an extra mipmap for anti-aliased rendering. The bottom row of
+Figure 7 shows a grayscale map of the computational cost. Similar
+to the texture magniﬁcation case, the computational cost of corre-
+sponding pixels is fairly stable across the four renderings.
+
+Results Figure 1 shows two objects mapped with diffusion curve
+textures designed by an artist. The color and texture variations at
+different scales (e.g. the smooth color variation and the rich texture
+variation) are effectively modeled and rendered by our method.
+
+Figure 9 (a) displays renderings of a coffee cup using our method.
+Note that the subtle shading details and sharp features in the dif-
+fusion curve texture are well preserved for this and the remaining
+examples in this section.
+
+Figure 9 (b) illustrates the rendering results of a sculpture model.
+The diffusion curve texture of the wood pattern is obtained by ﬁtting
+diffusion curves to a rasterized image of the wood texture. Our
+rendering results accurately convey the natural color variations and
+sharp boundaries of the wood pattern under the different views.
+
+Figure 9 (c) exhibits the renderings of a dragon model decorated
+with complicated color patterns designed by an artist using a diffu-
+sion curve authoring tool [Orzan et al. 2008]. In this example, both
+the geometric shapes and texture patterns are complicated, which
+makes it a challenge for existing diffusion curve rendering meth-
+ods [Jeschke et al. 2009b; Jeschke et al. 2009a]. Our method well
+models the complicated color patterns and rich color variations, and
+generates convincing anti-aliased rendering results. Please see the
+supplemental video for more rendering results with these models.
+
+7
+
+To appear in the ACM SIGGRAPH conference proceedings
+
+Figure 9: Some results rendered with diffusion curve textures. (a) A coffee cup that exhibits both subtle shading details and sharp features. (b)
+A sculpture mapped with wood texture obtained by ﬁtting diffusion curves to a rasterized texture image. (c) A dragon model with a diffusion
+curve texture designed using a diffusion curve authoring tool.
+
+Acknowledgements
+
+We would like to thank the reviewers for their valuable comments.
+Guofu Xie and Wencheng Wang were partially supported by NSF
+of China (60833007).
+
+References
+
+BAYIN, S¸ . 2006. Mathematical methods in science and engineer-
+
+ing. Wiley-Interscience.
+
+BEZERRA, H., EISEMANN, E., DECARLO, D., AND THOLLOT,
+J. 2010. Diffusion constraints for vector graphics. In Proceed-
+ings of the 8th International Symposium on Non-Photorealistic
+Animation and Rendering, ACM, New York, NY, USA, NPAR
+’10, 35–42.
+
+BOLZ, J., FARMER, I., GRINSPUN, E., AND SCHR ¨OODER, P.
+2003. Sparse matrix solvers on the gpu: conjugate gradients
+and multigrid. ACM Trans. Graph. 22 (July), 917–924.
+
+BOWERS, J. C., LEAHEY, J., AND WANG, R. 2011. A Ray Trac-
+ing Approach to Diffusion Curves. Computer Graphics Forum
+30, 4, 1345–1352.
+
+D’EON, E., AND IRVING, G. 2011. A quantized-diffusion model
+for rendering translucent materials. ACM Trans. Graph. 30
+(Aug.), 56:1–56:14.
+
+ELDER, J., AND GOLDBERG, R. 2001. Image editing in the con-
+tour domain. Pattern Analysis and Machine Intelligence, IEEE
+Transactions on 23, 3 (mar), 291 –296.
+
+FARBMAN, Z., FATTAL, R., AND LISCHINSKI, D. 2011. Convo-
+
+lution pyramids. ACM Trans. Graph. 30 (Dec.), 175:1–175:8.
+
+FINCH, M., SNYDER, J., AND HOPPE, H. 2011. Freeform vector
+graphics with controlled thin-plate splines. ACM Trans. Graph.
+30 (Dec.), 166:1–166:10.
+
+JESCHKE, S., CLINE, D., AND WONKA, P. 2009. Rendering
+surface details with diffusion curves. ACM Trans. Graph. 28
+(December), 117:1–117:8.
+
+KAZHDAN, M., AND HOPPE, H. 2008. Streaming multigrid for
+gradient-domain operations on large images. ACM Trans. Graph.
+27 (August), 21:1–21:10.
+
+LAI, Y.-K., HU, S.-M., AND MARTIN, R. R. 2009. Auto-
+matic and topology-preserving gradient mesh generation for im-
+age vectorization. ACM Trans. Graph. 28 (July), 85:1–85:8.
+
+LECOT, G., AND LEVY, B. 2006. Ardeco: Automatic region detec-
+tion and conversion. In Eurographics Symposium on Rendering.
+
+LIPMAN, Y., LEVIN, D., AND COHEN-OR, D. 2008. Green co-
+ordinates. In ACM SIGGRAPH 2008 papers, ACM, New York,
+NY, USA, SIGGRAPH ’08, 78:1–78:10.
+
+NEHAB, D., AND HOPPE, H. 2008. Random-access rendering
+of general vector graphics. ACM Trans. Graph. 27 (December),
+135:1–135:10.
+
+NVIDIA, 2011.
+
+CUDA programming guide 4.0, May.
+
+http://developer.nvidia.com/object/cuda.html.
+
+ORZAN, A., BOUSSEAU, A., WINNEM ¨OLLER, H., BARLA, P.,
+THOLLOT, J., AND SALESIN, D. 2008. Diffusion curves: a
+vector representation for smooth-shaded images. In ACM SIG-
+GRAPH 2008 papers, ACM, New York, NY, USA, SIGGRAPH
+’08, 92:1–92:8.
+
+PANG, W., QIN, J., COHEN, M., HENG, P., AND CHOI, K. 2011.
+Fast rendering of diffusion curves with triangles. Computer
+Graphics and Applications, IEEE PP, 99, 1.
+
+QIN, Z., MCCOOL, M. D., AND KAPLAN, C. S. 2006. Real-
+time texture-mapped vector glyphs. In Proceedings of the 2006
+symposium on Interactive 3D graphics and games, ACM, New
+York, NY, USA, I3D ’06, 125–132.
+
+JESCHKE, S., CLINE, D., AND WONKA, P. 2009. A gpu laplacian
+solver for diffusion curves and poisson image editing. In ACM
+SIGGRAPH Asia 2009 papers, ACM, New York, NY, USA, SIG-
+GRAPH Asia ’09, 116:1–116:8.
+
+QIN, Z., MCCOOL, M. D., AND KAPLAN, C. 2008. Precise
+vector textures for real-time 3d rendering. In Proceedings of the
+2008 symposium on Interactive 3D graphics and games, ACM,
+New York, NY, USA, I3D ’08, 199–206.
+
+8
+
+(a)(b)(c)To appear in the ACM SIGGRAPH conference proceedings
+
+(cid:0)x(cid:48)
+
+Appendix B
+Here, we derive the analytical form of ¯φ(cid:48)
+to compute Eq. (22).
+From Eq. (19) and Eq. (21), we can express ¯φ(cid:48)
+(cid:48)(cid:1) d
+
+∂E(cid:0)x(cid:48)(cid:1)
+
+(cid:48)(cid:1) + E(cid:0)x
+
+(cid:0)x
+(cid:48)(cid:1) =
+
+(cid:0)R, x
+
+i,j
+
+C
+
+FG
+
+(cid:48)
+¯φ
+E
+
+∂t (x(cid:48))
+
+dx(cid:48) FG
+
+(cid:1) and ¯φ(cid:48)
+
+E
+
+(cid:0)x(cid:48)
+
+i,j
+
+(cid:1) used
+
+E (x(cid:48)) as
+(cid:0)R, x
+
+(cid:48)(cid:1) · t(cid:0)x
+
+(cid:48)(cid:1) (29)
+
+where the differential of FG is dependent on the differential of HG,
+which we compute from Eq. (15) as
+
+(cid:16)
+(cid:16)
+
++ ˆy
+
+2 − ln
+
++ ˆx
+
+2 − ln
+
+(cid:16)
+ˆx2 + ˆy2(cid:17)(cid:17)
+(cid:16)
+ˆx2 + ˆy2(cid:17)(cid:17)
+
+;
+
+(30)
+
+∂
+
+∂
+
+ˆx
+
+(cid:19)
+(cid:19)
+
+∂x(cid:48) HG (ˆx, ˆy) = −2ˆx arctg
+∂y(cid:48) HG (ˆx, ˆy) = −2ˆy arctg
+
+(cid:18) ˆy
+(cid:18) ˆx
+where ˆx = xi − x(cid:48) and ˆy = yi − y(cid:48).
+Similarly, we obtain ¯φ(cid:48)
+(cid:48)(cid:1) + C(cid:0)x
+(cid:0)x
+(cid:48)(cid:1) =
+
+∂C(cid:0)x(cid:48)(cid:1)
+
+ˆy
+
+FGn
+
+(cid:48)
+¯φ
+C
+
+∂t (x(cid:48))
+
+C (x(cid:48)) based on Eq. (16) and Eq. (17):
+(cid:0)R, x
+(cid:48)(cid:1) · t(cid:0)x
+
+(cid:0)R, x
+
+(cid:48)(cid:1) d
+
+(cid:48)(cid:1) (31)
+
+dx(cid:48) FGn
+
+∂
+
+(cid:19)
+
+(cid:18)
+
+where the differential of FGn is dependent on the differential on
+HGn computed from Eq. (17):
+∂x(cid:48) HGn (ˆx, ˆy, nx, ny) = −ny −
+− ∂ny
+∂y(cid:48) HGn (ˆx, ˆy, nx, ny) = −nx −
+− ∂nx
+
+(cid:19)
+(cid:18) ˆy
+ˆx2 + ˆy2(cid:17)
+(cid:18) ˆx
+(cid:19)
+(cid:16)
+ˆx2 + ˆy2(cid:17)
+
+(cid:19)
+(cid:19)
+(cid:19)
+(cid:19)
+
+(cid:18) ˆx
+(cid:18) ˆy
+
+∂nx
+∂x(cid:48) ˆx
+∂nx
+∂x(cid:48) ˆy
+∂ny
+∂y(cid:48) ˆy
+∂ny
+∂y(cid:48) ˆx
+
+∂ny
+∂x(cid:48) ˆx +
+
+∂nx
+∂y(cid:48) ˆy +
+
+∂y(cid:48) ˆx arctg
+
+∂x(cid:48) ˆy arctg
+
+− 1
+2
+
+− 1
+2
+
+. (32)
+
+(cid:18)
+
+(cid:18)
+
+(cid:19)
+
+(cid:18)
+
+nx +
+
+nx +
+
+ny +
+
+ny +
+
+(cid:16)
+
+arctg
+
+arctg
+
+ln
+
+ln
+
+ˆy
+
+ˆy
+
+ˆx
+
+ˆx
+
+∂
+
+;
+
+As ∂C(x(cid:48))
+∂t(x(cid:48)) , ∂E(x(cid:48))
+control curves, ¯φ(cid:48)
+as above.
+
+∂t(x(cid:48)) , ∂n(x(cid:48))
+C (x(cid:48)) and ¯φ(cid:48)
+
+∂t(x(cid:48)) and dn(x(cid:48))
+dx(cid:48)
+
+can be obtained from the
+E (x(cid:48)) can be calculated analytically
+
+RAMANARAYANAN, G., BALA, K., AND WALTER, B. 2004.
+Feature-Based Textures. Eurographics Symposium on Render-
+ing.
+
+SEN, P., CAMMARANO, M., AND HANRAHAN, P. 2003. Shadow
+Silhouette Maps. ACM Transactions on Graphics (TOG) (Pro-
+ceedings of SIGGRAPH 2003) 22, 3, 521–526.
+
+SEN, P. 2004. Silhouette maps for improved texture magniﬁca-
+tion. In Proceedings of the ACM SIGGRAPH/EUROGRAPHICS
+conference on Graphics hardware, ACM, New York, NY, USA,
+HWWS ’04, 65–73.
+
+SUN, J., LIANG, L., WEN, F., AND SHUM, H.-Y. 2007.
+
+Im-
+age vectorization using optimized gradient meshes. ACM Trans.
+Graph. 26 (July).
+
+TAKAYAMA, K., SORKINE, O., NEALEN, A., AND IGARASHI, T.
+2010. Volumetric modeling with diffusion surfaces. ACM Trans.
+Graph. 29 (December), 180:1–180:8.
+
+TARINI, M., AND CIGNONI, P. 2005. Pinchmaps: textures with
+customizable discontinuities. Computer Graphics Forum 24, 3,
+557–568.
+
+TUMBLIN, J., AND CHOUDHURY, P. 2004. Bixels: Picture sam-
+ples with sharp embedded boundaries. In Rendering Techniques,
+255–264.
+
+WANG, L., ZHOU, K., YU, Y., AND GUO, B. 2010. Vector solid
+
+textures. ACM Trans. Graph. 29 (July), 86:1–86:8.
+
+WANG, L., YU, Y., ZHOU, K., AND GUO, B. 2011. Multiscale
+
+vector volumes. ACM Trans. Graph. 30 (Dec.), 167:1–167:8.
+
+XIA, T., LIAO, B., AND YU, Y. 2009. Patch-based image vec-
+torization with automatic curvilinear feature alignment. ACM
+Trans. Graph. 28 (December), 115:1–115:10.
+
+Appendix A
+
+In the following, we provide a detailed derivation of Eq. (14) and
+Eq. (16).
+Based on Eq. (9), the indeﬁnite integral of the Green’s function
+G (R, x(cid:48)) can evaluated analytically with the substitution of ˆx =
+(ˆx, ˆy) for x − x(cid:48):
+(cid:90)(cid:90)
+(cid:48)(cid:1) dx =
+
+ˆx2 + ˆy2 dˆx
+
+(cid:112)
+
+dˆy
+
+ln
+
+G(cid:0)x, x
+(cid:90) (cid:18)
+(cid:18)
+
+=
+
+=
+
+1
+4π
+1
+4π
+
+1
+2π
+−2ˆx + ˆx ln
+
+−3ˆxˆy + ˆxˆy ln
+
+(cid:90) (cid:18)(cid:90)
+(cid:16)
+ˆx2 + ˆy2(cid:17)
+ˆx2 + ˆy2(cid:17)
+(cid:16)
+
++ 2ˆy arctg
+
++ ˆx2 arctg
+
+(cid:19)
+(cid:18) ˆx
+(cid:18) ˆy
+
+ˆy
+
+ˆx
+
+(cid:19)
+(cid:19)
+
+(cid:19)
+
++ A0 (ˆy)
+
++ ˆy2 arctg
+
+dˆy
+
+(cid:18) ˆx
+
+(cid:19)(cid:19)
+
+ˆy
+
+1
+4π
+
++ A1 (ˆx) + A2 (ˆy) =
+
+HG (ˆx, ˆy) + A1 (ˆx) + A2 (ˆy) .
+
+(27)
+{Ai} are arbitrary functions because of the indeﬁnite integrals. HG
+is given in Eq. (15), and Eq. (14) is obtained from it accordingly.
+Similarly, the indeﬁnite integral of the normal derivative Gn (x, x(cid:48))
+(cid:90)(cid:90)
+from Eq. (10) is solved as
+
+(cid:19)
+
+Gn
+
+(cid:0)x, x
+(cid:90) (cid:18)
+(cid:18)
+
+1
+2π
+
+(cid:90) (cid:18)(cid:90) ˆx nx + ˆy ny
+(cid:48)(cid:1) dx =
+(cid:18) ˆx
+(cid:19)
+ˆx2 + ˆy2(cid:17)
+(cid:16)
+(cid:18) ˆy
+(cid:19)
+(cid:19)
+(cid:18) ˆx
+
+ˆx2 + ˆy2
+
+nx
+2
+
+ln
+
++
+
+ˆy
+
+ny arctg
+
+ny ˆy arctg
+
++ nx ˆx arctg
+
+ˆy
+
+=
+
+=
+
+1
+2π
+1
+2π
+
+dˆx
+
+dˆy
+
+(cid:19)
+
++ A0 (ˆy)
+
+dˆy
+
++
+
+1
+2
+
+(ny ˆx + nx ˆy) ln
+
+ˆx
+
+ˆx2 + ˆy2(cid:17)(cid:19)
+(cid:16)
+
++ A1 (ˆx) + A2 (ˆy) =
+
+1
+2π
+
+HGn (ˆx, ˆy, nx, ny) + A1 (ˆx) + A2 (ˆy) (28)
+
+where HGn is given in Eq. (17) and Eq. (16) is determined from it.
+
+9
+
+
