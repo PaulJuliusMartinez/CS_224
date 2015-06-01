@@ -1,0 +1,542 @@
+Analysis of Contour Motions
+Ce Liu William T. Freeman Edward H. Adelson Computer Science and Artificial Intelligence Laboratory
+Massachusetts Institute of Technology Cambridge, MA 02139, USA
+{celiu,billf,adelson}@csail.mit.edu
+Abstract
+A reliable motion estimation algorithm must function under a wide range of conditions. One regime, which we consider here, is the case of moving objects with contours but no visible texture. Tracking distinctive features such as corners can disambiguate the motion of contours, but spurious features such as T-junctions can be badly misleading. It is difficult to determine the reliability of motion from local measurements, since a full rank covariance matrix can result from both real and spurious features. We propose a novel approach that avoids these points altogether, and derives global motion estimates by utilizing information from three levels of contour analysis: edgelets, boundary fragments and contours. Boundary fragment are chains of orientated edgelets, for which we derive motion estimates from local evidence. The uncertainties of the local estimates are disambiguated after the boundary fragments are properly grouped into contours. The grouping is done by constructing a graphical model and marginalizing it using importance sampling. We propose two equivalent representations in this graphical model, reversible switch variables attached to the ends of fragments and fragment chains, to capture both local and global statistics of boundaries. Our system is successfully applied to both synthetic and real video sequences containing high-contrast boundaries and textureless regions. The system produces good motion estimates along with properly grouped and completed contours.
+1 Introduction
+Humans can reliably analyze visual motion under a diverse set of conditions, including textured as well as featureless objects. Computer vision algorithms have focussed on conditions of texture, where junction or corner-like image structures are assumed to be reliable features for tracking [5, 4, 17]. But under other conditions, these features can generate spurious motions. T-junctions caused by occlusion can move in an image very differently than either of the objects involved in the occlusion event [11]. To properly analyze motions of featureless objects requires a different approach.
+The spurious matching of T-junctions has been explained in [18] and [9]. We briefly restate it using the simple two bar stimulus in Figure 1 (from [18]). The gray bar is moving rightward in front of the leftward moving black bar, (a). If we analyze the motion locally, i.e. match to the next frame in a local circular window, the flow vectors of the corner and line points are as displayed in Figure 1 (b). The T-junctions located at the intersections of the two bars move downwards, but there is no such a motion by the depicted objects.
+One approach to handling the spurious motions of corners or T-junctions has been to detect such junctions and remove them from the motion analysis [18, 12]. However, T-junctions are often very difficult to detect in a static image from local, bottom-up information [9]. Motion at occluding boundaries has been studied, for example in [1]. The boundary motion is typically analyzed locally,
+
+(a) (b) (c)
+Figure 1: Illustration of the spurious T-junction motion. (a) The front gray bar is moving to the right and the black bar behind is moving to the left [18]. (b) Based on a local window matching, the eight corners of the bars show the correct motion, whereas the T-junctions show spurious downwards motion. (c) Using the boundarybased representation our system is able to correctly estimate the motion and generate the illusory boundary as well.
+which can again lead to spurious junction trackings. We are not aware of an existing algorithm that can properly analyze the motions of featureless objects.
+In this paper, we use a boundary-based approach which does not rely on motion estimates at corners or junctions. We develop a graphical model which integrates local information and assigns probabilities to candidate contour groupings in order to favor motion interpretations corresponding to the motions of the underlying objects. Boundary completion and discounting the motions of spurious features result from optimizing the graphical model states to explain the contours and their motions. Our system is able to automatically detect and group the boundary fragments, analyze the motion correctly, as well as exploit both static and dynamic cues to synthesize the illusory boundaries (c).
+We represent the boundaries at three levels of grouping: edgelets, boundary fragments and contours, where a fragment is a chain of edgelets and a contour is a chain of fragments. Each edgelet within a boundary fragment has a position and an orientation and carries local evidence for motion. The main task of our model is then to group the boundary fragments into contours so that the local motion uncertainties associated with the edgelets are disambiguated and occlusion or other spurious feature events are properly explained. The result is a specialized motion tracking algorithm that properly analyzes the motions of textureless objects.
+Our system consists of four conceptual steps, discussed over the next three sections (the last two steps happen together while finding the optimal states in the graphical model):
+(a) Boundary fragment extraction: Boundary fragments are detected in the first frame. (b) Edgelet tracking with uncertainties: Boundary fragments are broken into edgelets, and,
+based on local evidence, the probability distribution is found for the motion of each edgelet of each boundary fragment. (c) Grouping boundary fragments into contours: Boundary fragments are grouped, using both temporal and spatial cues. (d) Motion estimation: The final fragment groupings disambiguate motion uncertainties and specify the final inferred motions.
+We restrict the problem to two-frame motion analysis though the algorithm can easily be extended to multiple frames.
+2 Boundary Fragment Extraction
+Extracting boundaries from images is a nontrivial task by itself. We use a simple algorithm for boundary extraction, analyzing oriented energy using steerable filters [3] and tracking the boundary in a manner similar to that of the Canny edge detector [2]. A more sophisticated boundary detector can be found in [8]; occluding boundaries can also be detected using special cameras [13]. However, for our motion algorithm designed to handle the special case of textureless objects, we find that our simple boundary detection algorithm works well.
+Mathematically, given an image I, we seek to obtain a set of fragments B = {b i}, where each fragment bi is a chain of edgelets bi = {eik}kn=i 1. Each edgelet eik = {pik, ik} is a particle which embeds both location pik  R2 and orientation ik  [0, 2) information.
+
+(a) (b) (c) (d)
+Figure 2: The local motion vector is estimated for each contour in isolation by selectively comparing orientation energies across frames. (a) A T-junction of the two bar example showing the contour orientation for this motion analysis. (b) The other frame. (c) The relevant orientation energy along the boundary fragment, both for the 2nd frame. A Gaussian pdf is fit to estimate flow, weighted by the oriented energy. (d) Visualization of the Gaussian pdf. The possible contour motions are unaffected by the occluding contour at a different orientation and no spurious motion is detected at this junction.
+We use H4 and G4 steerable filters [3] to filter the image and obtain orientation energy per pixel. These filters are selected because they describe the orientation energies well even at corners. For each pixel we find the maximum energy orientation and check if it is local maximum within a slice perpendicular to this orientation. If that is true and the maximum energy is above a threshold T 1 we call this point a primary boundary point. We collect a pool of primary boundary points after running this test for all the pixels.
+We find the primary boundary point with the maximum orientation energy from the pool and do bidirectional contour tracking, consisting of prediction and projection steps. In the prediction step, the current edgelet generates a new one by following its orientation with a certain step size. In the projection step, the orientation is locally maximized both in the orientation bands and within a small spatial window. The tracking is stopped if the energy is below a threshold T 2 or if the turning angle is above a threshold. The primary boundary points that are close to the tracked trajectory are removed from the pool. This process is repeated until the pool is empty. The two thresholds T 1 and T2 play the same roles as those in Canny edge detection [2]. While the boundary tracker should stop at sharp corners, it can turn around and continue tracking. We run a postprocess to break the boundaries by detecting points of curvature local maxima which exceed a curvature threshold.
+
+3 Edgelet Tracking with Uncertainties
+We next break the boundary contours into very short edgelets and obtain the probabilities, based on local motion of the boundary fragment, for the motion vector at each edgelet. We cannot use conventional algorithms, such as Lucas-Kanade [5], for local motion estimation since they rely on corners. The orientation ik for each edgelet was obtained during boundary fragment extraction. We obtain the motion vector by finding the spatial offsets of the edgelet which match the orientation energy along the boundary fragment in this orientation. We fit a Gaussian distribution N ( ik, ik) of the flow weighted by the orientation energy in the window. The mean and covariance matrix is added to the edgelet: eik = {pik, ik, ik, ik}. This procedure is illustrated in Figure 2.
+Grouping the boundary fragments allows the motion uncertainties to be resolved. We next discuss the mathematical model of grouping as well as the computational approach.
+
+4 Boundary Fragment Grouping and Motion Estimation
+
+4.1 Two Equivalent Representations for Fragment Grouping
+
+The essential part of our model is to find the connection between the boundary fragments. There are two possible representations for grouping. One representation is the connection of each end of the boundary fragment. We formulate the probability of this connection to model the local saliency of contours. The other equivalent representation is a chain of fragments that forms a contour, on which global statistics are formulated, e.g. structural saliency [16]. Similar local and global modeling of contour saliency was proposed in [14]; in [7], both edge saliency and curvilinear continuity were used to extract closed contours from static images. In [15], contour ends are grouped using loopy belief propagation to interpret contours.
+
+The connections between fragment ends are modeled by switch variables. For each boundary frag-
+
+ment
+
+bi,
+
+we
+
+use
+
+a
+
+binary
+
+variable
+
+{0,
+
+1}
+
+to
+
+denote
+
+the
+
+two
+
+ends
+
+of
+
+the
+
+fragment,
+
+i.e.
+
+b
+
+(0) i
+
+= ei1
+
+and
+
+b(i1) = ei,ni .
+
+Let switch
+
+variable S(i, ti) = (j, tj )
+
+denote
+
+the
+
+connection
+
+from
+
+b
+
+(ti i
+
+)
+
+to b(jtj).
+
+This
+
+b3 b3 b3 b3 b3
+
+b1 (a)
+
+b2
+
+b1
+
+b(0) 1
+
+(b)
+
+b2
+
+b1 (c)
+
+b2
+
+b1 (d)
+
+b2
+
+b1 (e)
+
+b2
+
+Figure 3: A simple example illustrating switch variables, reversibility and fragment chains. The color arrows
+show the switch variables. The empty circle indicates end 0 and the filled indicates end 1. (a) Shows three boundary fragments. Theoretically b(10) can connect to any of the other ends including itself, (b). However, the switch variable is exclusive, i.e. there is only one connection to b1(0), and reversible, i.e. if b1(0) connects to b3(0), then b3(0) should also connect to b1(0), as shown in (c). Figures (d) and (e) show two of the legal contour groupings for the boundary fragments: two open contours and a closed loop contour.
+
+connection is exclusive, i.e. each end of the fragment should either connect to one end of the other fragment, or simply have no connection. An exclusive switch is further called reversible, i.e.
+
+if S(i, ti) = (j, tj), then S(j, tj) = (i, ti),
+
+or in a more compact form
+
+S(S(i, ti)) = (i, ti).
+
+(1)
+
+When
+
+there
+
+is
+
+no
+
+connection
+
+to
+
+b
+
+(ti i
+
+)
+
+,
+
+we simply set S(i, ti) = (i, ti).
+
+We use the binary function
+
+[S(i, ti)-(j, tj )]
+
+to
+
+indicate
+
+whether
+
+there
+
+is
+
+a
+
+connection
+
+between
+
+b
+
+(ti i
+
+)
+
+and
+
+bj(tj ).
+
+The
+
+set
+
+of
+
+all
+
+the switches are denoted as S = {S(i, ti)|i = 1 : N, ti = 0, 1}. We say S is reversible if every switch
+
+variable satisfies Eqn. (1). The reversibility of switch variables is shown in Figure 3 (b) and (c).
+
+From the values of the switch variables we can obtain contours, which are chains of boundary fragments. A fragment chain is defined as a series of the end points c = {(bi(1x1), bi(1x1)), · · · , (b(imxm), b(imxm))}. The chain is specified by fragment label {i1, · · · , im} and end label {x1, · · · , xm}. It can be either open or closed. The order of the chain is determined by the switch variable. Each end appears in the chain at most once. The notation of a chain is not unique.
+Two open chains are identical if the fragment and end labels are reversed. Two closed chains are
+identical if they match each other by rotating one of them. These identities are guaranteed from the reversibility of the switch variables. A set of chains C = {ci} can be uniquely extracted based on the values of the reversible switch variables, as illustrated in Figure 3 (d) and (e).
+
+4.2 The Graphical Model
+Given the observation O, the two images, and the boundary fragments B, we want to estimate the flow vectors V = {vi} and vi = {vik}, where each vik associates with edgelet eik, and the grouping variables S (switches) or equivalently C (fragment chains). Since the grouping variable S plays an essential role in the problem, we shall first infer S and then infer V based on S.
+
+4.2.1 The Graph for Boundary Fragment Grouping
+
+We use two equivalent representations for boundary grouping, switch variables and chains. We use [S(S(i, ti)) - (i, ti)] for each end to enforce the reversibility. Suppose otherwise S(i 1, ti1 ) = S(i2, ti2 ) = (j, tj ) for i1 = i2. Let S(j, tj) = (i1, ti1 ) without loss of generality, then [S(S(i2, ti2 )) - (i2, ti2 )] = 0, which means that the switch variables are not reversible.
+
+We use a function (S(i, ti); B, O) to measure the distribution of S(i, ti), i.e.
+
+how
+
+likely
+
+b
+
+(ti i
+
+)
+
+connects to the end of other fragments. Intuitively, two ends should be connected if
+
+Motion similarity the distributions of the motion of the two end edgelets are similar; Curve smoothness the illusory boundary to connect the two ends is smooth; Contrast consistency the brightness contrast at the two ends consistent with each other.
+
+We write (·) as a product of three terms, one enforcing each criterion. We shall follow the example in Figure 4 to simplify the notation, where the task is to compute (S(1, 0) = (2, 0)). The first term
+
+b(0) 2
+
+b2
+
+b1
+
+b(0) 1
+
+(a)
+
+(21, 21) b2
+b1 (11, 11) (b)
+
+b2 r b1
+(c)
+
+h11
+b1 h12
+
+h21
+h22 b2
+(d)
+
+Figure 4: An illustration of local saliency computation. (a) Without loss of generalization we assume the two ends to be b(10) and b(20). (b) The KL divergence between the distributions of flow vectors are used to measure the motion similarity. (c) An illusory boundary  is generated by minimizing the energy of the curve. The sum
+of square curvatures are used to measure the curve smoothness. (d) The means of the local patches located at the two ends are extracted, i.e. h11 and h12 from b1(0), h21 and h22 from b(20), to compute contrast consistency.
+
+is the KL divergence between the two Gaussian distributions of the flow vectors
+
+exp{-KLKL(N (11, 11), N (21, 21))},
+
+(2)
+
+where KL is a scaling factor. The second term is the local saliency measure on the illusory boundary  that connects the two ends. The illusory boundary is simply generated by minimizing the
+
+energy of the curve. The saliency is defined as
+
+exp
+
+-
+
+
+d 2 ds
+ds
+
+,
+
+(3)
+
+where (s) is the slope along the curve, and
+
+d ds
+
+is
+
+local curvature [16].
+
+
+
+is
+
+a scaling factor.
+
+The
+
+third term is computed by extracting the mean of local patches located at the two ends
+
+exp
+
+-
+
+dmax 2m2 ax
+
+-
+
+dmin 2m2 in
+
+,
+
+(4)
+
+where d1 = (h11 - h21)2, d2 = (h12 - h22)2, and dmax = max(d1, d2), dmin = min(d1, d2).
+
+max > min are the scale parameters. h11, h12, h21, h22 are the means of the pixel values of
+
+the four patches located at the two end points. For self connection we simply set a constant value:
+
+(S(i, ti) = (i, ti)) =  .
+
+We use a function (ci; B, O) to model the structural saliency of contours. It was discovered in [10] that convex occluding contours are more salient, and additional T-junctions along the contour may
+increase or decrease the occlusion perception. Here we simply enforce that a contour should have no self-intersection. (ci; B, O) = 1 if there is no self intersection and (ci; B, O) = 0 otherwise.
+
+Thus, the (discrete) graphical model favoring the desired fragment grouping is
+
+Pr(S; B, O)
+
+=
+
+1 ZS
+
+N1
+(S(i, ti); B, O)[S(S(i, ti))
+i=1 ti=0
+
+-
+
+(i, ti)]
+
+·
+
+M
+(cj; B, O),
+j=1
+
+(5)
+
+where ZS is a normalization constant. Note that this model measures both the switch variables S(i, ti) for local saliency and the fragment chains ci to enforce global structural saliency.
+
+4.2.2 Gaussian MRF on Flow Vectors
+
+Given the fragment grouping, we model the flow vectors V as a Gaussian Markov random field (GMRF). The edgelet displacement within each boundary fragment should be smooth and match the observation along the fragment. The probability density is formulated as
+
+(vi; bi) =
+
+ni
+
+exp{-(vik
+
+-
+
+ik )T
+
+-ik1(vik
+
+-
+
+ik )}
+
+ni -1
+
+exp{-
+
+1 22
+
+vik - vi,k+1
+
+2},
+
+k=1
+
+k=1
+
+where ik and ik are the motion parameters of each edgelet estimated in Sect 3.
+
+(6)
+
+We use V(i, ti) to denote the flow vector of end ti of fragment bi. We define V(S(i, ti)) = V(j, tj ) if S(i, ti) = (j, tj ). Intuitively the flow vectors of the two ends should be similar if they are con-
+nected, or mathematically
+
+(V(i, ti), V(S(i, ti))) =
+
+1 ifS(i, ti) = (i, ti),
+
+exp{-
+
+1 22
+
+V(i, ti)-V(S(i, ti))
+
+2}
+
+otherwise.
+
+(7)
+
+The (continuous) graphical model of the flow vectors is therefore defined as
+
+1N
+
+1
+
+Pr(V|S; B) =
+
+ZV
+
+(vi; bi) (V(i, ti), V(S(i, ti)))
+i=1 ti=0
+
+(8)
+
+where ZV is a normalization constant. When S is given it is a GMRF which can be solved by least squares.
+
+4.3 Inference
+
+Having defined the graphical model to favor the desired motion and grouping interpretations, we
+need to find the state parameters that best explain the image observations. The natural decomposition of S and V in our graphical model
+
+Pr(V, S; B, O) = Pr(S; B, O) · Pr(V|S; B, O),
+
+(9)
+
+(where Pr(S; B, O) and Pr(V|S; B, O) are defined in Eqn. (5) and (8) respectively) lends itself to performing two-step inference. We first infer the boundary grouping B, and then infer V based on B. The second step is simply to solve least square problem since Pr(V|S; B, O) is a GMRF. This approach does not globally optimize Eqn. (9) but results in reasonable solution because V strongly depends on S. The density function Pr(S; B, O) is not a random field, so we use importance sampling [6] to obtain the marginal distribution Pr(S(i, t i); B, O). The proposal density of each switch variable is set to be
+
+q (S(i, ti) = (j, tj))
+
+
+
+1 Zq
+
+
+
+(S
+
+(i,
+
+ti
+
+)
+
+=
+
+(j,
+
+tj
+
+))
+
+
+
+(S
+
+(j,
+
+tj
+
+)
+
+=
+
+(i,
+
+ti
+
+))
+
+(10)
+
+where (·) has been normalized to sum to 1 for each end. We found that this bidirectional measure
+is crucial to take valid samples. To sample the proposal density, we first randomly select a boundary fragment, and connect to other fragments based on q(S(i, t i)) to form a contour (a chain of boundary fragments). Each end is sampled only once, to ensure reversibility. This procedure is repeated until no fragment is left. In the importance step we run the binary function (c i) to check that each contour has no self-intersection. If (ci) = 0 then this sample is rejected. The marginal distributions are estimated from the samples. Lastly the optimal grouping is obtained by replacing
+random sampling with selecting the maximum-probability connection over the estimated marginal
+distributions. The number of samples needed depends on the number of the fragments. In practice we find that n2 samples are sufficient for n fragments.
+
+5 Experimental Results
+Figure 6 shows the boundary extraction, grouping, and motion estimation results of our system for both real and synthetic examples1. All the results are generated using the same parameter settings. The algorithm is implemented in MATLAB, and the running time varies from ten seconds to a few minutes, depending on the number of the boundary fragments found in the image.
+The two-bar examples in Figure 1(a) yields fourteen detected boundary fragments in Figure 6(a) and two contours in (b). The estimated motion matches the ground truth at the T-junctions. The fragments belonging to the same contour are plotted in the same color and the illusory boundaries are synthesized as shown in (c). The boundaries are warped according to the estimated flow and displayed in (d). The hallucinated illusory boundaries in frame 1 (c) and 2 (d) are plausible amodal completions.
+The second example is the Kanizsa square where the frontal white square moves to the right bottom. Twelve fragments are detected in (a) and five contours are grouped in (b). The estimated motion and generated illusory boundary also match the ground truth and human perception. Notice that the arcs tend to connect to other ones if we do not impose the structural saliency (·).
+We apply our system to a video of a dancer (Figure 5 (a) and (b)). In this stimulus the right leg moves downwards, but there is weak occluding boundary at the intersection of the legs. Eleven
+1The results can be viewed online http://people.csail.mit.edu/celiu/contourmotions/
+
+(a) Dancer frame 1 (b) Dancer frame 2
+
+(c) Chair frame 1
+
+(d) Chair frame 2
+
+Figure 5: Input images for the non-synthetic examples of Figure 6. The dancer's right leg is moving downwards and the chair is rotating (note the changing space between the chair's arms).
+
+boundary fragments are extracted in (a) and five contours are extracted in (b). The estimated motion (b) matches the ground truth. The hallucinated illusory boundary in (c) and (d) correctly connect the occluded boundary of the right leg and the invisible boundary of the left leg.
+The final row shows challenging images of a rotating chair (Figure 5 (c) and (d)), also showing proper contour completion and motion analysis. Thirty-seven boundary fragments are extracted and seven contours are grouped. To complete the occluded contours of this image would be nearly impossible working only from a static image. Exploiting motion as well as static information, our system is able to complete the contours properly.
+Note that the traditional motion analysis algorithms fail at estimating motion for these examples (see supplementary videos) and would thus also fail at correctly grouping the objects based on the motion cues.
+
+6 Conclusion
+We propose a novel boundary-based representation to estimate motion under the challenging visual conditions of moving textureless objects. Ambiguous local motion measurements are resolved through a graphical model relating edgelets, boundary fragments, completed contours, and their motions. Contours are grouped and their motions analyzed simultaneously, leading to the correct handling of otherwise spurious occlusion and T-junction features. The motion cues help the contour completion task, allowing completion of contours that would be difficult or impossible using only low-level information in a static image. A motion analysis algorithm such as this one that correctly handles featureless contour motions is an essential element in a visual system's toolbox of motion analysis methods.
+
+References
+[1] M. J. Black and D. J. Fleet. Probabilistic detection and tracking of motion boundaries. International Journal of Computer Vision, 38(3):231­245, 2000.
+[2] J. Canny. A computational approach to edge detection. IEEE Trans. Pat. Anal. Mach. Intel., 8(6):679­698, Nov 1986.
+[3] W. T. Freeman and E. H. Adelson. The design and use of steerable filters. IEEE Trans. Pat. Anal. Mach. Intel., 13(9):891­906, Sep 1991.
+[4] B. K. P. Horn and B. G. Schunck. Determing optical flow. Artificial Intelligence, 17:185­203, 1981. [5] B. Lucas and T. Kanade. An iterative image registration technique with an application to stereo vision. In
+Proceedings of the International Joint Conference on Artificial Intelligence, pages 674­679, 1981. [6] D. Mackay. Information Theory, Inference, and Learning Algorithms. Cambridge University Press, 2003. [7] S. Mahamud, L. Williams, K. Thornber, and K. Xu. Segmentation of multiple salient closed contours
+from real images. IEEE Trans. Pat. Anal. Mach. Intel., 25(4):433­444, 2003. [8] D. Martin, C. Fowlkes, and J. Malik. Learning to detect natural image boundaries using local brightness,
+color, and texture cues. IEEE Trans. Pat. Anal. Mach. Intel., 26(5):530­549, May 2004. [9] J. McDermott. Psychophysics with junctions in real images. Perception, 33:1101­1127, 2004. [10] J. McDermott and E. H. Adelson. The geometry of the occluding contour and its effect on motion inter-
+pretation. Journal of Vision, 4(10):944­954, 2004. [11] J. McDermott and E. H. Adelson. Junctions and cost functions in motion interpretation. Journal of Vision,
+4(7):552­563, 2004.
+
+(a) Extracted boundaries (b) Estimated flow
+
+(c) Frame 1
+
+(d) Frame 2
+
+Figure 6: Experimental results for some synthetic and real examples. The same parameter settings were used for all examples. Column (a): Boundary fragments are extracted using our boundary tracker. The red dots are the edgelets and the green ones are the boundary fragment ends. Column (b): Boundary fragments are grouped into contours and the flow vectors are estimated. Each contour is shown in its own color. Columns (c): the illusory boundaries are generated for the first and second frames. The gap between the fragments belonging to the same contour are linked exploiting both static and motion cues in Eq. (5).
+
+[12] S. J. Nowlan and T. J. Sejnowski. A selection model for motion processing in area mt primates. The Journal of Neuroscience, 15(2):1195­1214, 1995.
+[13] R. Raskar, K.-H. Tan, R. Feris, J. Yu, and M. Turk. Non-photorealistic camera: depth edge detection and stylized rendering using multi-flash imaging. ACM Trans. Graph. (SIGGRAPH), 23(3):679­688, 2004.
+[14] X. Ren, C. Fowlkes, and J. Malik. Scale-invariant contour completion using conditional random fields. In Proceedings of International Conference on Computer Vision, pages 1214­1221, 2005.
+[15] E. Saund. Logic and MRF circuitry for labeling occluding and thinline visual contours. In Advances in Neural Information Processing Systems 18, pages 1153­1160, 2006.
+[16] A. Shahua and S. Ullman. Structural saliency: the detection of globally salient structures using a locally connected network. In Proceedings of International Conference on Computer Vision, pages 321­327, 1988.
+[17] J. Shi and C. Tomasi. Good features to track. In IEEE Conference on Computer Vision and Pattern Recognition, pages 593­600, 1994.
+[18] Y. Weiss and E. H. Adelson. Perceptually organized EM: A framework for motion segmentaiton that combines information about form and motion. Technical Report 315, M.I.T Media Lab, 1995.
+
+

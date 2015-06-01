@@ -1,0 +1,504 @@
+Fast Low-Rank Semidefinite Programming for Embedding and Clustering
+
+Brian Kulis Department of Computer Sciences
+University of Texas at Austin Austin, TX 78759 USA kulis@cs.utexas.edu
+
+Arun C. Surendran Microsoft adCenter Labs
+1 Microsoft Way Redmond, WA 98052 USA acsuren@microsoft.com
+
+John C. Platt Microsoft Research
+1 Microsoft Way Redmond, WA 98052 USA john.platt@microsoft.com
+
+Abstract
+Many non-convex problems in machine learning such as embedding and clustering have been solved using convex semidefinite relaxations. These semidefinite programs (SDPs) are expensive to solve and are hence limited to run on very small data sets. In this paper we show how we can improve the quality and speed of solving a number of these problems by casting them as low-rank SDPs and then directly solving them using a nonconvex optimization algorithm. In particular, we show that problems such as the k-means clustering and maximum variance unfolding (MVU) may be expressed exactly as low-rank SDPs and solved using our approach. We demonstrate that in the above problems our approach is significantly faster, far more scalable and often produces better results compared to traditional SDP relaxation techniques.
+
+1 Introduction
+
+A recent trend in machine learning research has been to use semidefinite programming for a number of learning tasks. Semidefinite programs (SDPs) seek to optimize a linear objective with linear constraints as well as a semidefinite constraint. The standard primal form for an SDP is:
+
+min
+Z Rn×n
+subject to
+
+tr(C Z )
+tr(ZAi) = bi, 0  i  m Z 0,
+
+(1)
+
+where the C and Ai matrices are given, as well as the bi values. The constraint Z 0 requires that Z be positive semi-definite.
+ Work done while at Microsoft Research
+
+Examples of applications that use SDPs include sparse PCA [6], maximum variance unfolding [17], robust Euclidean embedding [4], minimizing normalized or ratio cuts in a graph [14, 18], kernel matrix learning [9], and many others. Typically, off-the-shelf techniques are used for solving these problems, which severely limits scalability. Many of these methods scale as O(n3) or worse, where n is the number of rows (or columns) of the semidefinite matrix. Furthermore, they require O(n2) memory to store the semidefinite matrix. Thus, they are rarely used for problems when n is more than a few thousand. Despite the computational and memory restrictions inherent in SDPs, semidefinite programming is a standard technique for solving many problems.
+In many machine learning problems, e.g. in embedding via maximum variance unfolding (MVU), the original non-convex problem is transformed into a convex one by semidefinite relaxation in the original dimension of the data. Once a solution to this large SDP is found, the final solution to the original problem is obtained using low-rank embedding of the semidefinite solution. A similar process exists for SDP relaxations to clustering problems; after solving a large SDP, the final clusters are obtained using rounding, usually by finding the low rank projection of the data onto the top few eigenvectors of the SDP solution.
+Since the final goal in many of these problems is the low-rank solution, it is often wasteful to solve the original full-rank problem. In this paper, we take a different approach to optimizing these objective functions. We show that, for several embedding and clustering problems, the original (non-convex) objective function can be recast directly without relaxation as a low-rank SDP : an SDP with an additional rank constraint. Because of the rank constraint, we can directly solve for low-rank factorizations of the semidefinite matrix, treating the problem as a non-linear optimization problem. Rather than being seduced by convexity, we appeal to nonlinear programming techniques
+
+to solve exact reformulations of the original problems. This notion of forgoing convexity to gain speed and scalability is beginning to gain popularity in machine learning, notably in the recent work of [5].
+To solve the low-rank SDP problems, we generalize a recent algorithm by Burer and Monteiro [3] that uses low-rank factorizations to optimize full-rank SDPs. We perform all computations in the low-rank space, leading to dramatic improvements in speed and memory requirements. Moreover, the results we obtain are often significantly better than the results of the standard relaxation technique. We apply this algorithm to embedding and graph clustering problems, demonstrating improved results as compared to existing methods. For MVU, we compare our algorithm to the semidefinite relaxation method, and for our clustering experiments we compare it to other state-of-theart graph clustering algorithms.
+2 Low-Rank SDPs for Clustering and Embedding
+As mentioned above, the general idea is to convert a variety of problems into low-rank semidefinite programs. In Sections 2.1 and 2.2, we demonstrate how to achieve this for a clustering and an embedding problem. In Sections 2.1 and 4 we will briefly show how to extend this approach to other clustering and embedding problems.
+2.1 Low-Rank SDPs for Clustering
+We first consider low-rank SDPs for clustering. Specifically, we establish that the k-means objective function can be expressed equivalently as a low-rank SDP problem. Later, in section 3, we develop a general algorithm for directly optimizing low-rank SDPs. This algorithm minimizes the k-means objective function and has running time of O(zk) per iteration, where z is the number of non-zero elements of the Gram matrix (or the number of edges in a graph, for graph clustering). Unlike spectral methods for optimizing this objective, there is no relaxation involved in expressing the k-means objective function as a low-rank SDP, so post-processing or rounding of the resulting solution is not required to obtain a discrete clustering of the data.
+2.1.1 The k-means objective function
+Given a set of data points {xi}ni=1, and the number of desired clusters, k, the k-means objective function attempts to minimize the sum of squared Euclidean distances between each point and its corresponding
+
+cluster centroid:
+
+k
+
+D({c}ck=1) =
+
+xi - mc 2,
+
+c=1 xic
+
+where mc
+
+=
+
+1 |c|
+
+xi c
+
+xi.
+
+It has been established (for example, in [19]) that the above problem can be recast as a trace maximization problem, which leads to a spectral relaxation for kmeans. Peng [14] introduced a different but equivalent reformulation for this objective, yielding the following optimization problem:
+
+max
+Z Rn×n
+subject to
+
+tr(K Z )
+tr(Z) = k Z  0 elementwise Ze = e Z2 = Z, Z = ZT .
+
+(2)
+
+where K is the Gram matrix (or kernel matrix) of the data points (i.e. if X is the matrix whose rows are the xi vectors, then K = XXT ).
+We can make two observations about the problem as formulated in (2). First, it is known that solving this problem is equivalent to finding a global solution to the integer programming problem for k-means [14]. Second, (2) is related to the generic SDP formulation in (1), except that the semidefinite constraint Z 0 is replaced by Z2 = Z and Z = ZT . These constraints force all the eigenvalues of Z to be 0 or 1 (i.e., (Z)  {0, 1}), hence this is a special form called a 0-1 SDP [14]. This integer constraint on the eigenvalues makes it intractable to directly optimize the problem in (2). As a result, relaxation methods are often employed to obtain approximations of the original problem: one can relax the constraint Z2 = Z to a weaker constraint such as (Z)  [0, 1] or Z 0. Depending on the relaxation, spectral methods or semi-definite programming are then employed to find a globally optimal solution to the relaxed problem. For example, Xing and Jordan [18] considered a weighted form of this objective (i.e., normalized cut), and solved it approximately via semidefinite programming using such a relaxation.
+
+2.1.2 Equivalence to Low-Rank SDPs
+We now show how we can convert (2) explicitly into a low-rank SDP problem. The first step is to replace the constraints Z2 = Z and Z = ZT with a rank constraint on Z and a positive semi-definite constraint. The following theorem explains why this rank constraint is meaningful, and will also show us how to do this recasting:
+
+Theorem 1. Given
+a) tr(Z) = k b) Z  0 elementwise c) Ze = e d) Z = ZT ,
+then rank(Z) = k if and only if Z2 = Z.
+
+j, and is equal to 1/ kj otherwise, where kj is the number of points in the cluster to which j is assigned. Thus, the optimal Y gives the optimal clustering for the k-means objective.
+The final piece in the solution is to explicitly factor Z as a low-rank matrix Z = Y Y T , and solve for Y instead. We later discuss a method for solving this low-rank SDP directly in Section 3.
+
+Proof. First we show rank(Z) = k  Z2 = Z. Since rank(Z) = k, Z has n - k eigenvalues equal to 0. Recall that a matrix is reducible if and only if it can be put into block upper-triangular form with simultaneous permutations of rows and columns, and a square matrix that is not reducible is irreducible. If Z were irreducible, we could conclude that Ze = e and Z  0 imply (by the Perron-Frobenius Theorem [15]) that all but the top eigenvalue are strictly less than 1. But since there are only k non-zero eigenvalues, this would make it impossible to satisfy tr(Z) = k. Thus, Z is reducible, and because it is symmetric, it is permutationsimilar to a block-diagonal matrix. Each block Zi satisfies Zie = e, and hence each block has an eigenvalue of 1. The Perron-Frobenius theorem applies to these block-diagonal, irreducible matrices, and thus each block has the property that it has a leading eigenvalue of 1, and all other eigenvalues are strictly less than one. We must therefore have k blocks, each with a single positive eigenvalue of 1; otherwise it would be impossible to satisfy tr(Z) = k. Therefore, each of the k non-zero eigenvalues equals 1, so (Z)  {0, 1}, and hence Z2 = Z. In the other direction, Z2 = Z is equivalent to (Z)  {0, 1}. Thus, tr(Z) = k implies that rank(Z) = k.
+
+It follows from the above result that we can rewrite the k-means objective function in (2) as an SDP with an additional rank constraint:
+
+max
+Z Rn×n
+subject to
+
+tr(K Z )
+tr(Z) = k Z  0 elementwise Ze = e rank(Z) = k Z 0.
+
+(3)
+
+2.1.3 Implications
+
+Surprisingly, the solution to the continuous optimization problem (3) produces a feasible point for the 0-1 optimization problem, without requiring the 0-1 constraint. That is, the problem (3) returns a solution that encodes a discrete cluster indicator matrix. Thus, unlike standard relaxation techniques for k-means, we require no post-processing of the solution.
+Furthermore, problem (3) can easily be extended to solve a number of graph partitioning problems. As discussed in Dhillon et al. [7], if we introduce a weighted form of the k-means objective function, there exists an equivalence to graph clustering objectives such as normalized cut, ratio cut, and ratio association for an appropriate choice of weights. For example, we perform graph clustering using the ratio association objective:
+
+max
+
+k i=1
+
+links(Vi |Vi|
+
+,
+
+Vi)
+
+,
+
+where Vi refers to the set of nodes in cluster i, and links(Vi, Vi) gives the sum of all the edges from nodes in cluster i to other nodes in cluster i. The ratio asso-
+ciation objective is a natural generalization of k-means
+to graphs, since optimizing the k-means objective func-
+tion over a set of vectors is equivalent to optimizing
+the ratio association objective over the Gram matrix
+of those vectors.
+
+Additional graph clustering objectives are possible in
+
+this framework as well. For example, by introducing
+
+a cluster size constraint as discussed in Peng [14] (in
+
+particular,
+
+the
+
+constraint
+
+diag(Y T Y )
+
+
+
+1 s
+
+e,
+
+where
+
+s
+
+is
+
+the minimum size of a cluster), we can easily encode
+
+balancing constraints for the clusters. Thus, various
+
+clustering objective functions can be encoded as low-
+
+rank SDPs.
+
+We have shown that Z permutes to a block-diagonal matrix that captures the disjoint clustering of the data and has rank k. We also know that Z is an orthogonal projection matrix, so it follows that Z can be factored as Z = Y Y T , where Y is an n × k matrix. The entries of Y are discrete-valued and give the cluster assignments; in particular, Yij = 0 if point i is not in cluster
+
+2.2 Low-Rank SDPs for Embedding
+We now turn our attention to the problem of embedding a set of high-dimensional vectors into a lowerdimensional space, while retaining characteristics of the original data. Embedding is a natural application of low-rank semidefinite programming since the rank
+
+constraint corresponds to the desired dimensionality of the embedding in various embedding problems.
+
+In maximum variance unfolding, we seek to find lowdimensional representations of our input data that have maximum possible variance, while preserving local distances of the input data. The underlying optimization problem can be expressed as [17]:
+
+max
+Y Rn×r
+subject to
+
+yi
+
+2=
+
+1 2n
+
+yi - yj 2 (4)
+
+i i,j
+
+yi = 0
+i
+yi - yj 2 = Dij (i, j)  E.
+
+The set E contains the nearest neighbors of the input data, and Dij gives the distance between neighbors i and j in the input space. The above problem is nonconvex, but by relaxing the problem to be convex, it can be expressed as the following SDP [17]:
+
+max
+Z Rn×n
+subject to
+
+tr(Z )
+
+(5)
+
+eT Ze = 0 Zii + Zjj - 2Zij = Dij (i, j)  E Z 0.
+
+The standard method for computing the embedding is to solve the above SDP for Z, and then to project the data onto the first few eigenvectors of Z. Note that when projecting the data onto the top eigenvectors of Z, we are longer guaranteed that the resulting embedding satisfies the given constraints.
+
+However, by adding an explicit rank constraint to
+
+(5) for the desired dimensionality of the embedding,
+
+it is easy to show that we are directly optimizing
+
+the original problem (4). This follows by factoriz-
+
+ing Z = Y Y T and rewriting the problem in terms
+
+of Y : straint
+
+tr(Z ) eT Ze
+
+= =
+
+tr(Y Y T ) = 0 maps to
+
+i
+i yi
+
+yi 2. The con= 0 and the dis-
+
+tance constraints Zii + Zjj - 2Zij = Dij map to
+
+yTi yi + yTj yj - 2yiT yj = yi - yj 2. Thus, adding
+
+the constraint rank(Z) = r to (5) leads to a low-rank
+
+SDP that is equivalent to the original MVU problem.
+
+Furthermore, because we work directly in the embed-
+
+ded space, convergence of the low-rank SDP guaran-
+
+tees that all constraints are satisfied, whereas project-
+
+ing a solution to (5) to a lower dimension can cause
+
+the constraints to be violated.
+
+3 Solving the Low-Rank Semidefinite Programs
+In the previous sections we showed how we can formulate two problems as low-rank SDPs. In this section,
+
+we discuss a general technique for optimizing the lowrank formulations.
+
+Recently, Burer and Monteiro [3] considered a method for solving the standard (full-rank) SDP (1) using a change of variables. Since there exists an optimal solution to (1) whose rank satisfies r(r + 1)/2  m (proven independently by Barvinok [1] and Pataki [13]), Burer and Monteiro introduce a change of variables Z = Y Y T , where Y  Rn×r and r satisfies the inequality above. Rewriting the optimization over Y , the problem can be expressed as a quadratic program with (generally non-convex) quadratic constraints:
+
+max
+Y Rn×r
+subject to
+
+tr(Y T CY )
+
+(6)
+
+tr(Y T AiY ) = bi, 0  i  m.
+
+A key aspect of this formulation is that it avoids the positive semidefinite constraint, since Z = Y Y T automatically enforces the constraint. A disadvantage to this formulation is that the problem has gone from convex to non-convex, so we have given up the guarantee of converge to the globally optimal solution.
+
+Burer and Monteiro proposed to solve this quadratic programming problem using the augmented Lagrangian technique. The augmented Lagrangian for (6) is given by:
+
+m
+
+L(Y, , ) = tr(Y T CY ) - i(tr(Y T AiY ) - bi)
+
+i=1
+
++
+
+ 2
+
+m
+(tr(Y T AiY ) - bi)2.
+
+i=1
+
+The third term is the penalty term for the augmented Lagrangian, introducing a variable . To minimize the augmented Lagrangian, we alternate minimizing this function with respect to Y and with respect to  and . To optimize with respect to Y , Burer and Monteiro use a limited-memory BFGS algorithm, which has the advantage of maintaining O(nr) memory overhead, but also has the speed of a quasi-Newton method. This requires computation of the gradient of L with respect to Y , Y L(Y, , ), given by:
+m
+2CY - 2 (i - (tr(Y T AiY ) - bi))AiY.
+i=1
+
+To update  and  (assuming equality constraints),
+the standard augmented Lagrangian technique updates apply: set i = i - (tr(Y T AiY ) - bi), and update  by a multiplicative factor. On several test
+problems, Burer and Monteiro demonstrated that this
+technique always empirically converges to the globally
+optimal solution, despite the fact that the quadratic
+programming problem is non-convex. Furthermore,
+
+they showed that their algorithm is significantly faster than existing SDP solvers.
+We propose to apply the same technique to our lowrank SDPs.1 We differ from Burer and Monteiro in that we solve SDPs with explicit rank constraints, so the size of the matrix Y is precisely determined by the rank constraint. Note that the rank of our solution does not in general satisfy the inequality r(r + 1)/2  m; however, empirically this does not in general lead to poor solutions.
+As an example, the low-rank SDP for k-means discussed earlier (3) can be recast as an optimization problem over the factorization Z = Y Y T , where Y is Rn×k:
+
+max
+Y Rn×k
+subject to
+
+tr(Y T KY )
+
+Y
+
+2 F
+
+=
+
+k
+
+YYTe = e
+
+Y  0 elementwise,
+
+(7)
+
+where we have replaced the constraint Y Y T  0 elementwise with the stronger constraint Y  0 elementwise, which is easier to enforce in the low-rank setting. Any feasible solution to this problem yields a discrete cluster indicator matrix Y .
+The main computational cost involved in running the low-rank SDP algorithm is in computing the Lagrangian and the gradient of the Lagrangian. In the case of k-means, the most expensive step in computing the Lagrangian is the computation of tr(Y T KY ), which can be done in O(zk) time, where z is the number of non-zero entries of the matrix K. For computing the gradient of the Lagrangian, the most expensive step is in forming the matrix KY , which can also be performed in O(zk) time. Thus, the function and gradient evaluations for k-means can both be performed in O(zk) time.
+
+3.1 Inequality Constraints for Low-Rank SDPs
+Another departure from Burer and Monteiro's algorithm is that our low-rank SDPs contain inequality constraints, which are not readily handled by [3]; thus, we now generalize the method to handle inequality constraints. There are several options for handling linear inequality constraints in the low-rank SDP formulation; for example, one possibility is to use a log barrier function. However, it turns out that for the
+1In some cases such as sparse PCA, the limited-memory BFGS algorithm cannot be employed; a subgradient technique would be more appropriate for optimizing the augmented Lagrangian.
+
+augmented Lagrangian approach, it is easier to solve directly for updates of the Lagrange multipliers for both equality and inequality constraints.
+By treating a constraint tr(Y T AiY )  bi as the constraints tr(Y T AiY ) = bi + si and si  0, we can explicitly solve for the updates of the i terms. For inequality constraints, this yields
+
+i = max(i - (tr(Y T AiY ) - bi), 0).
+
+This agrees with the requirement that i  0 for La-
+
+grange multipliers for inequality constraints. Com-
+
+puting the Lagrangian and the gradient of the La-
+
+grangian are also straightforward for inequality con-
+
+straints. The second and third terms of the La-
+
+grangian change: for each constraint i, the Lagrangian
+
+term -i(tr(Y T AiY unchanged if (tr(Y
+
+)
+T
+
+- bi) AiY )
+
++ -
+
+ 2
+
+(tr(Y
+
+bi) 
+
+T AiY ) - bi)2 is i. Otherwise,
+
+this term becomes -2i /2. Similarly, in the com-
+
+putation of the gradient of the Lagrangian, we only
+
+contribute the term 2(i - (tr(Y T AiY ) - bi))AiY if (tr(Y T AiY ) - bi)  i. Otherwise, nothing is added to the gradient. It is easy to extend this idea to the
+
+actual elementwise constraint Y  0 that we use in
+
+our k-means formulation in (7).
+
+See [12] for further information on the augmented Lagrangian technique.
+
+4 Related Problems
+
+Min balanced cut embedding (discussed by Lang [10] and others) is another important embedding technique. It avoids the so-called "octopus" structure that exists in many embedding methods, especially when dealing with power-law graphs. This problem is demonstrated in [10]: typically, embedding algorithms embed the points densely close to the origin, with many points projected outward in various directions like tentacles. By adding constraints that both embeds the points onto a sphere and promotes balanced cuts, this problem is avoided.
+The SDP for min balanced cut is expressed as follows:
+
+min
+Z Rn×n
+subject to
+
+tr(LZ )
+diag(Z) = e eT Ze = 0.
+
+(8)
+
+The diag(Z) = e constraint places all the data points onto the unit sphere, while the eT Xe = 0 constraint forces the data to be mean-centered at 0. The matrix L is the Laplacian of the input graph corresponding to the points. Unlike the earlier cases of k-means and maximum variance unfolding, adding a rank constraint to the SDP does not correspond to solving
+
+an exact form of the underlying objective function, but we can still apply the low rank transformation Z = Y Y T to write problem (8) as a quadratic program with quadratic constraints (QCQP) in Y , leading to a significantly more scalable algorithm for min balanced cut embedding.
+
+Finally, we can apply low-rank SDPs to the problem of finding sparse principal components. A recent paper by d'Aspremont et al. [6] expressed the sparse PCA problem for a single component as:
+
+max
+y
+subject to
+
+yT Ay
+y 2=1 card(y)  k.
+
+The function card() refers to the cardinality of y, i.e. the number of non-zero elements. Since yT Ay = tr(AyyT ), this problem can be expressed as a low-rank
+SDP:
+
+max
+Z Rn×n
+subject to
+
+tr(AZ )
+tr(Z) = 1 card(Z)  k2 rank(Z) = 1 X 0.
+
+Solving this problem is difficult because of the cardinality and rank constraints. The authors of [6] relax the sparsity constraint, instead imposing eT |Z|e  k, where |Z| is a matrix whose entries correspond to the absolute values of the entries of Z. They also drop the rank constraint, instead projecting the solution of the full-rank SDP to the principal eigenvector of Z.
+
+By treating this problem as a low-rank SDP, we can
+directly optimize y through the low-rank substitution Z = yyT ; this avoids relaxing the rank constraint.
+Furthermore, we can enforce a simple constraint di-
+rectly on y, such as y 1  k, to promote a sparse solution.
+
+5 Experimental Results
+5.1 Methodology
+We first compare results of the low-rank SDP solver against a state-of-the-art interior point SDP solver, DSDP [2]. We chose to compare against DSDP because, as compared to other freely-available solvers, it performed the best on sparse SDP benchmark experiments [11]. By comparing the low-rank solver with DSDP, we can determine 1) how the computational times compare between a traditional SDP solver and a low-rank SDP solver, and 2) how the accuracy compares between these solvers. Because DSDP is limited
+
+Data set Iris Pima Vehicle Sonar Segment Satimage Pendigits
+
+Number of data points 150 768 846 208 2310 2000 1092
+
+Table 1: Data sets used for small-scale maximum variance experiments
+
+Data set add20 data uk add32 rajat06 crack whitaker3
+
+Number of nodes 2395 2851 4824 4960 10922 10240 9880
+
+Number of Edges 7462 15093 6837 9462 18061 30380 28989
+
+Table 2: Graphs used for graph clustering experiments
+
+to small data sets, we run large-scale experiments using only the low-rank solver.
+We tested the two solvers on SDP problems discussed earlier: maximum variance unfolding and graph clustering. Due to space constraints, we cannot present results on sparse PCA or min balanced cut embedding. For maximum variance unfolding, we fixed the number of neighbors to be 5, and generated the constraints from these 5 nearest neighbors. In a recent paper [16], Weinberger et al. discuss a procedure for consolidating constraints. By removing redundant constraints, the authors demonstrate how to substantially improve the running times of the SDP. We did not perform such a step in our algorithm, though doing so would almost certainly result in further improvements of the running times of our algorithm.
+For graph clustering, we optimize the ratio association objective and compare results of our low-rank solver against various existing state-of-the-art methods: kernel k-means, the spectral relaxation, and the multilevel method developed in [8]. For postprocessing the solutions of the relaxation algorithms, we used standard k-means. Note that since SDP relaxation methods for k-means do not scale to graphs larger than a few hundred nodes, comparisons to SDP relaxations were not possible for these experiments.
+Default settings were applied to DSDP, and for the low-rank SDP, we used a multiplicative factor of 1.5 for  and uniform initialization for Y .
+
+5.2 Data sets
+Tables 1 and 2 lists the small data sets used in our experiments. Table 1 consists of vector-based data sets used for maximum variance unfolding, and Table 2 consists of graph-based data sets used for graph clustering experiments.
+5.3 Results
+In Table 3, we present results of maximum variance unfolding. For these experiments, we ran DSDP on each of the data sets, recording the time taken to converge, the final variance (trace) value, and the maximum infeasibility (i.e., the amount of feasibility for the constraint that is most violated) first after running just DSDP, then after projecting to the top 10 eigenvectors (DSDP10). We similarly ran our low-rank solver on the same data sets, and recorded these values. However, for the low-rank solver, we also ran over varying ranks: 5, 10, and 50.
+Several interesting observations can be made about these results. First, the dashed lines represent DSDP failing to converge (due to memory problems, generally). This happened on two of the data sets (and many larger data sets not presented here), even though none of these data sets is particularly large. Second, even when DSDP converged, it did not always converge to the optimal solution. In fact, it converged to a feasible solution that was better than all low-rank solutions on only one of the data sets (sonar). On other data sets, at least one of the low-rank solutions produced higher variance. Third, the running times for DSDP are generally much slower than the low-rank SDP program. DSDP was hundreds of times slower than the low-rank SDP for r = 5 or r = 10 on several data sets. Fourth, the solutions to DSDP generally have better feasibility properties in terms of maximum infeasibility and average infeasibility (not presented in the table), but the low-rank SDP solutions generally have maximum infeasibility lower than 1×10-3, which is reasonable for machine learning applications. Fifth, after projecting down to 10 dimensions, generally the variance given by DSDP is close to that of the unprojected variance, except in the case of vehicle, where the variance went from 1.4 to 1.3 and the maximum infeasibility jumped from 10-11 to 10-3. Finally, overall it seems that for r = 10, we get a good quality/speed tradeoff for the low-rank algorithm. In fact, sometimes the r = 10 solution is the best (for example, in pendigits), and generally the solution for r = 10 is nearly as good as the higher rank solutions. On the other hand, for r = 5, the solution was substantially suboptimal in some cases (for example, on pima).
+Now we focus on graph clustering. In this experiment,
+
+Data set Iris Pima Vehicle Sonar Segment Satimage Pendigits
+
+Run
+DSDP DSDP10
+LR5 LR10 LR50 DSDP DSDP10 LR5 LR10 LR50 DSDP DSDP10 LR5 LR10 LR50 DSDP DSDP10 LR5 LR10 LR50 DSDP DSDP10 LR5 LR10 LR50 DSDP DSDP10 LR5 LR10 LR50 DSDP DSDP10 LR5 LR10 LR50
+
+Trace Val
+8.834e-1 8.834e-1 1.206e+0 1.220e+0 1.227e+0 1.098e+1 1.098e-4 8.512e+0 1.103e+1 1.113e+1 1.441e+1 1.300e+1 1.636e+1 1.681e+1 1.665e+1 6.476e+1 6.476e+1 5.298e+1 6.473e+1 6.471e+1
+-- -- 1.300e+2 1.212e+2 1.259e+2 -- -- 5.378e+0 5.443e+0 5.437e+0 1.005e+4 8.995e+3 3.003e+0 3.159e+0 3.142e+0
+
+Max. Inf.
+5.007e-9 7.648e-8 3.257e-5 3.381e-5 3.285e-5 5.292e-12 1.813e-6 4.966e-4 2.261e-4 2.733e-4 1.410e-11 5.387e-3 2.098e-4 1.543e-4 1.493e-4 2.951e-12 7.648e-8 1.666e-2 8.369e-6 3.700e-6
+-- -- 7.530e-3 1.167e-3 2.044e-3 -- -- 6.141e-5 3.162e-5 3.851e-5 3.051e+1 2.881e+1 5.615e-5 6.796e-5 6.531e-5
+
+Time
+184 184 15 17 80 25109 25109 294 153 744 40851 40851 120 167 978 71 71 24 7 40 -- -- 450 1040 4791 -- -- 233 281 1366 1761 1761 137 159 1092
+
+Table 3: Results for maximum variance unfolding
+we clustered the graphs given in Table 2 by optimizing the ratio association objective function. We compared four methods: baseline kernel k-means with random initialization, the spectral relaxation technique (with k-means postprocessing), Graclus [8] (a kernel k-means approach that is enhanced using multilevel techniques), and the low-rank SDP. We could not run any stronger relaxations than the spectral relaxation due to the size of the graphs (semidefinite relaxations for k-means are generally limited to only a few hundred points).
+Results are given in Table 4. On four of the seven graphs, the low-rank SDP yields the highest ratio association score. Both the low-rank SDP method and Graclus consistently outperformed the spectral method
+
+Graph
+add20 add32 uk rajat06 data crack whitaker3
+
+Kernel k-means
+54.72 11.79 6.29 9.69 33.39 17.70 17.51
+
+Spectral
+72.44 17.94 11.29 12.04 44.13 21.92 23.04
+
+Graclus
+20.71 15.19 11.22 13.08 41.06 23.37 23.29
+
+Low-Rank SDP
+75.27 18.94 11.43 12.64 44.71 22.72 23.13
+
+Table 4: Ratio association results on graph clustering experiments (k = 4)
+
+(except on add20, where spectral outperformed Graclus). Though not given here, we also ran experiments for minimizing the normalized cut; however, we found that Graclus outperformed the low-rank SDP in this case. As future work, we would like to explore multilevel methods using the low-rank SDP algorithm, which may make it more competitive for minimizing the normalized cut.
+6 Conclusions
+In this paper, we have studied low-rank semidefinite programming. We demonstrated how we can convert various clustering and embedding problems such as kmeans and maximum variance unfolding into low-rank SDPs without any convex relaxations. We then directly optimized these low-rank SDP formulations using non-convex algorithms, performing computations directly in the low-rank space. We showed that our approach is significantly faster, better and more scalable than standard SDP approaches for embedding. We also showed that for graph clustering, our approach matches or outperforms state-of-the-art techniques.
+References
+[1] A. Barvinok. Problems of distance geometry and convex properties of quadratic maps. Discrete Computational Geometry, 13:189­202, 1995.
+[2] S. J. Benson, Y. Ye, and X. Zhang. Solving large-scale sparse semidefinite programs for combinatorial optimization. SIAM Journal on Optimization, 10(2):443­ 461, 2000.
+[3] S. Burer and R. D. C. Monteiro. A nonlinear programming algorithm for solving semidefinite programs via low-rank factorization. Mathematical Programming (Series B), 95:329­357, 2003.
+[4] L. Cayton and S. Dasgupta. Robust euclidean embedding. In Proc. of the 23rd Intl. Conf. on Machine Learning, 2006.
+[5] R. Collobert, F. Sinz, J. Weston, and L. Bottou. Trading convexity for scalability. In Proc. 23 ICML Conference, 2006.
+[6] A. d'Aspremont, L. El Ghaoui, M. I. Jordan, and G. R. G. Lanckriet. A direct formulation for sparse
+
+pca using semidefinite programming. SIAM Review, 2006.
+[7] I. Dhillon, Y. Guan, and B. Kulis. A unified view of kernel k-means, spectral clustering and graph cuts. Technical Report TR-04-25, University of Texas at Austin, 2004.
+[8] I. Dhillon, Y. Guan, and B. Kulis. A fast kernelbased multilevel algorithm for graph clustering. In 11th ACM SIGKDD Conference, 2005.
+[9] G. R. G. Lanckriet, N. Cristianini, P. Bartlett, L. El Ghaoui, and M. I. Jordan. Learning the kernel matrix with semidefinite programming. Journal of Machine Learning Research, 5:27­72, 2004.
+[10] K. Lang. Fixing two weaknesses of the spectral method. In Neural Information Processing Systems 18, 2005.
+[11] H. Mittelmann. Several SDP-codes on sparse and other SDP problems. http://plato.asu.edu/ftp/ sparse_sdp.html, Jul 2006.
+[12] J. Nocedal and S. J. Wright. Numerical Optimization. Springer, 1999.
+[13] G. Pataki. On the rank of extreme matrices in semidefinite programs and the multiplicity of optimal eigenvalues. Mathematics of Operations Research, 23:339­358, 1998.
+[14] J. Peng. 0-1 semidefinite programming for spectral clustering: Modeling and approximation. Technical Report 2005/12, Advanced Optimization Laboratory, McMaster University, 2005.
+[15] S. U. Pillai, T. Suel, and S. Cha. The PerronFrobenius theorem. IEEE Signal Processing Magazine, 22(2):62­75, March 2005.
+[16] K. Q. Weinberger, B. D. Packer, and L. K. Saul. Nonlinear dimensionality reduction by semidefinite programming and kernel matrix factorization. In Proc. of the 10th Intl. Workshop and Artificial Intelligence and Statistics, 2005.
+[17] K. Q. Weinberger, F. Sha, and L. K. Saul. Learning a kernel matrix for nonlinear dimensionality reduction. In Proc. of the 21st Intl. Conf. on Machine Learning, 2004.
+[18] E. P. Xing and M. I. Jordan. On semidefinite relaxations for normalized k-cut and connections to spectral clustering. Technical Report CSD-03-1265, University of California at Berkeley, 2003.
+[19] H. Zha, C. Ding, M. Gu, X. He, and H. Simon. Spectral relaxation for k-means clustering. In Neural Information Processing Systems 14, 2001.
+
+

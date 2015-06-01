@@ -1,0 +1,479 @@
+Spatio-Temporal View Interpolation
+Sundar Vedula, Simon Baker, and Takeo Kanade
+CMU-RI-TR-01-35
+The Robotics Institute Carnegie Mellon University
+Pittsburgh, PA 15213 September 2001
+(C) 2001 All rights reserved.
+
+Abstract
+We propose an algorithm for creating novel views of a non-rigidly varying dynamic event by combining images captured from different positions, at different times. The algorithm operates by combining images captured across space and time to compute voxel models of the scene shape at each time instant, and dense 3D scene flow between the voxel models (the non-rigid motion of every point in the scene). To interpolate in time the voxel models are "flowed" using the appropriate scene flow and a smooth surface fit to the result. The novel image is then computed by ray-casting to the surface at the intermediate time, following the scene flow to the neighboring time instants, projecting into the input images at those times, and finally blending the results. We use the algorithm to create re-timed slow-motion fly-by movies of real-world events.
+Keywords: Image Based Rendering, View Synthesis, Scene Flow, 3D Modeling
+
+Contents
+
+1 Introduction
+
+1
+
+2 Inputs to the Algorithm 2.1 Explicit 3D Models Vs. Correspondences . . . . . . . . . . . . . . . . . . 2.2 3D Voxel Models and 3D Scene Flow . . . . . . . . . . . . . . . . . . . .
+
+1 1 3
+
+3 Spatio-Temporal View Interpolation 3.1 High-Level Overview of the Algorithm . . . . . . . . . . . . . . . . . . . . 3.2 Flowing the Voxel Models . . . . . . . . . . . . . . . . . . . . . . . . . . 3.3 Ray-Casting Across Space and Time . . . . . . . . . . . . . . . . . . . . . 3.4 Ray-Casting to a Smooth Surface . . . . . . . . . . . . . . . . . . . . . . .
+
+4 4 5 5 7
+
+4 Ideal Properties of the Scene Flow
+
+9
+
+4.1 Duplicate Voxels . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+4.2 Results With and Without Duplicate Voxels . . . . . . . . . . . . . . . . . 11
+
+5 Re-Timed Fly-By Movies
+
+12
+
+6 Discussion
+
+13
+
+List of Figures
+1 Spatio-Temporal View Interpolation Example . . . . . . . . . . . . . . . . 2 2 Inputs: Images, Voxel models, Flow . . . . . . . . . . . . . . . . . . . . . 3 3 Shape interpolated between two time instants . . . . . . . . . . . . . . . . 4 4 Ray-casting algorithm . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6 5 Fitting a smooth surface to a voxel grid . . . . . . . . . . . . . . . . . . . 7 6 Approximating a smooth surface through voxel centers . . . . . . . . . . . 8 7 Rendering with and without surface fitting . . . . . . . . . . . . . . . . . . 9 8 Effect of duplicate voxels . . . . . . . . . . . . . . . . . . . . . . . . . . . 10 9 Collection of frames from dancer movie . . . . . . . . . . . . . . . . . . . 12 10 Inputs for dumbell sequence . . . . . . . . . . . . . . . . . . . . . . . . . 13 11 Rendered frames for dumbell sequence . . . . . . . . . . . . . . . . . . . . 14
+
+1 Introduction
+We describe an algorithm for interpolating images of a non-rigidly varying dynamic event across space and time. While there has been a large amount of research on imagebased interpolation of static scenes across space (see, for example, [Chen and Williams, 1993, Seitz and Dyer, 1996, Gortler et al., 1996, Levoy and Hanrahan, 1996, Sato et al., 1997, Narayanan et al., 1998]), there has been almost no research on re-rendering a dynamic event across time. What work there has been has assumed a very restricted motion model. Either the event consists of rigidly moving objects [Manning and Dyer, 1999] or point features moving along straight lines with constant velocity [Wexler and Shashua, 2000]. Our algorithm is applicable to completely non-rigid events and uses no scene or object specific models.
+Figure 1 presents an illustrative example of this task which we call Spatio-Temporal View Interpolation. The figure contains 4 images captured by 2 cameras at 2 different time instants. The images on the left are captured by camera ½, those on the right by camera
+¾. The bottom 2 images are captured at the first time instant and the top 2 at the second. Spatio-temporal view interpolation consists of combining these 4 views into a novel image of the event at an arbitrary viewpoint and time. Although we have described spatio-temporal view interpolation in terms of 2 images taken at 2 time instants, our algorithm applies to an arbitrary number of images taken from an arbitrary collection of cameras spread over an extended period of time.
+Our algorithm is based on the explicit recovery of 3D scene properties. We use the 3D voxel coloring algorithm [Seitz and Dyer, 1999] to recover a voxel model of the scene at each time instant, and a 3D scene flow algorithm [Vedula et al., 1999] to recover the nonrigid motion of the scene between consecutive time instants. The voxel models and scene flow then form part of the input to our algorithm.
+To generate a novel image at an intermediate viewpoint and time, the 3D voxel models at the neighboring times are first "flowed" to estimate an interpolated scene shape at that time. After a smooth surface has been fit to the flowed voxel model, the novel image is generated by ray casting. Rays are projected into the scene and intersected with the interpolated scene shape. The points at which these rays intersect the surface are used to find the corresponding points at the neighboring times by following the scene flow forwards and backwards. The known geometry of the scene at those times is then used to project the corresponding points into the input images. The input images are sampled at the appropriate locations and the results blended to generate the novel image at the intermediate space and time.
+2 Inputs to the Algorithm
+2.1 Explicit 3D Models Vs. Correspondences
+To generate novel views of the event we need to know how the pixels in the input images are geometrically related to each other. In the various approaches to imaged-based
+1
+
+t=2 Time
+
+t=1 t=t*
+
+Novel Image I*+
+
+Camera C1
+
+Camera C+
+
+Camera C2 Space
+
+Figure 1: Spatio-temporal view interpolation consists of taking a collection of images of an event captured with multiple cameras at different times and re-rendering the event at an arbitrary viewpoint and time. In this illustrative figure, the 2 images on the left are captured with the same camera at 2 different times, and the 2 images on the right with a different camera at the same 2 time instants. The novel image and time are shown as halfway between the cameras and time instants but are arbitrary in our algorithm.
+
+interpolation of static scenes across space, there are 2 common ways in which this information is provided. First, there are algorithms that use implicit geometric information in the form of feature correspondences [Chen and Williams, 1993, Seitz and Dyer, 1996]. Second, there are approaches which use explicit 3D models of the scene [Sato et al., 1997, Narayanan et al., 1998]. (Note that these references are meant to be representative rather than comprehensive.)
+We decided to base our algorithm on explicit 3D models of the scene. The primary reason for this decision is that we would like our algorithms to be fully automatic. The correspondences that are used in implicit rendering algorithms are generally specified by hand. While hand-marking (sparse) correspondences might be possible in a pair of images, it becomes an enormous task when images of a dynamic sequence are captured over time, and from a multitude of viewing directions.
+The relationship between pixels across time can be described by how the points on the surface of the scene move across time. Assuming that the scene can move in an arbitrarily
+
+2
+
+Input Images t=1
+
+Voxel Models 3D Scene Flow
+
+t=2
+
+Camera C1
+
+Camera C2
+
+Camera C3
+
+Camera Cn
+
+S1 and S2
+
+F1
+
+Figure 2: The input to the spatio-temporal view interpolation algorithm is a set of calibrated images at 2 or more consecutive time instants. From these input images, 3D voxel models are computed at each time instant using the voxel coloring algorithm [Seitz and Dyer, 1999]. We then compute the dense non-rigid 3D motion of points between the models using a scene flow algorithm [Vedula et al., 1999].
+non-rigid way, the 3D motion of points is the scene flow [Vedula et al., 1999]. We use the combination of scene shape (represented as 3D voxel models) and 3D scene flow to relate the pixels in the input images.
+
+2.2 3D Voxel Models and 3D Scene Flow
+Denote the time-varying scene ËØ where Ø ½ Ì is a set of time instants. Suppose that the scene is imaged by Æ fully calibrated cameras with synchronized shutters. The input to the algorithm is the set of images ÁØ captured by cameras , where ½ Æ and Ø ½ Ì . (See Figure 2 for an example set of input images.) We compute a 3D voxel model of the scene from these images:
+
+ËØ Ø ½ Î Ø
+
+(1)
+
+for Ø ½ Æ and where Ø ´ÜØ ÝØ ÞØµ is one of the Î Ø surface voxels at time Ø. We compute the set of surface voxels ËØ at each time instant Ø independently using a voxel coloring algorithm [Seitz and Dyer, 1999]. Figure 2 illustrates the voxel models computed for Ø ½ and Ø ¾.
+The scene flow of a voxel describes how it moves from time Ø to time Ø · ½. If the 3D voxel Ø ´ÜØ ÝØ ÞØµ at time Ø moves to:
+
+Ø· Ø
+
+´ÜØ · Ø ÝØ · Ø ÞØ · Øµ
+
+(2)
+
+at time Ø · ½ its scene flow at time Ø is then Ø ´ Ø Ø Øµ. We compute the scene flow Ø for every voxel in the model ËØ at each time Ø using the algorithm [Vedula et al., 1999].
+Figure 2 contains the result of computing the scene flow from Ø ½ to Ø ¾. The inputs to
+
+3
+
+t =1.00
+
+t =1.25 t =1.50
+
+t =1.75 t =2.00
+
+Figure 3: The scene shape between neighboring time instants can be interpolated by flowing the voxels at time Ø forwards. Note how the arm of the dancer flows smoothly from Ø ½ to Ø ¾.
+
+our spatio-temporal view interpolation algorithm consist of the images ÁØ, the cameras , the 3D voxel models ËØ, and the 3D scene flows Ø. (Although we do not use them in this paper, note that algorithms have been proposed to compute voxel models and scene flow simultaneously [Vedula et al., 2000].)
+
+3 Spatio-Temporal View Interpolation
+3.1 High-Level Overview of the Algorithm
+Suppose we want to generate a novel image Á·£ from virtual camera · at time Ø£, where Ø Ø£ Ø · ½. The first step is to "flow" the voxel models ËØ and ËØ·½ using the scene flow to estimate an interpolated voxel model Ë£. The second step consists of fitting a smooth surface to the flowed voxel model Ë£. The third step consists of ray-casting across space and time. For each pixel ´Ù Úµ in Á·£ a ray is cast into the scene and intersected with the interpolated scene shape (the smooth surface). The scene flow is then followed forwards and backwards in time to the neighboring time instants. The corresponding points at those times are projected into the input images, the images sampled at the appropriate locations, and the results blended to give the novel image pixel Á·£ ´Ù Úµ. Spatio-temporal view interpolation can therefore be summarized as:
+1. Flow the voxel models to estimate Ë£.
+2. Fit a smooth surface to Ë£.
+3. Ray-cast across space and time.
+We now describe these 3 steps in detail starting with Step 1. Since Step 3. is the most important step and can be explained more easily without the complications of surface fitting, we describe it before explaining how intersecting with a surface rather than a set of voxels modifies the algorithm.
+
+4
+
+3.2 Flowing the Voxel Models
+
+The scene shape is described by the voxels ËØ at time Ø and the voxels ËØ·½ at time Ø·½.
+The motion of the scene is defined by the scene flow Ø for each voxel Ø in ËØ. We now describe how to interpolate the shapes ËØ and ËØ·½ using the scene flow. By comparison, previous work on shape interpolation [Turk and O'Brien, 1999, Alexa et al., 2000] is based
+solely on the shapes themselves rather than on a flow field connecting them. We assume
+that the voxels move at constant speed in straight lines and so flow the voxels with the appropriate multiple of the scene flow. If Ø£ is an intermediate time (Ø Ø£ Ø · ½), we interpolate the shape of the scene at time Ø£ as:
+
+  ¢Ë£
+
+Ø · ´Ø£ Øµ
+
+Ø
+
+½ ÎØ
+
+(3)
+
+i.e. we flow the voxels forwards from time Ø. Figure 3 contains an illustration of voxels
+being flowed in this way. Equation (3) defines Ë£ in an asymmetric way; the voxel model at time Ø · ½ is not even
+used. Symmetry and other desirable properties of the scene flow are discussed in Section 4
+after we have presented the ray-casting algorithm.
+
+3.3 Ray-Casting Across Space and Time
+
+Once we have interpolated the scene shape we can ray-cast across space and time to
+
+generate the novel image Á·£ . As illustrated in Figure 4, we shoot a ray out into the scene for each pixel ´Ù Úµ in Á·£ at time Ø£ using the known geometry of camera ·. We find the
+
+intersection of this ray with the flowed voxel model. Suppose for now that the first voxel
+
+intersected is Ø£
+
+  ¢Ø · ´Ø£ Øµ Ø. (Note that we will describe a refinement of this
+
+step in Section 3.4.) We need to find a color for the novel pixel Á·£ ´Ù Úµ. We cannot project the voxel Ø£
+directly into an image because there are no images at time Ø£. We can find the corresponding
+
+voxels Ø at time Ø and Ø·½
+
+Ø · Ø at time Ø · ½, however. We take these voxels and
+
+project them into the images at time Ø and Ø · ½ respectively (using the known geometry of the cameras ) to get multiple estimates of the color of Á·£ ´Ù Úµ. This projection must respect the visibility of the voxels Ø at time Ø and Ø·½ at time Ø · ½ with respect to the
+
+cameras at the respective times. Once the multiple estimates of Á·£ ´Ù Úµ have been obtained, they are blended. We just
+have to decide how to weight the samples in the blend. Ideally we would like the weighting
+
+function to satisfy the property that if the novel camera · is one of the input cameras and the time is one of the time instants Ø£ Ø, the algorithm should generate the input
+
+image ÁØ, exactly. We refer to this requirement as the same-view-same-image principle.
+
+There are 2 components in the weighting function, space and time. The temporal aspect is the simpler case. We just have to ensure that when Ø£ Ø the weight of the pixels at time
+ Ø is 1 and the weight at time Ø · ½ is 0. We weight the pixels at time Ø by ´Ø · ½µ Ø£ and  those at time Ø · ½ so that the total weight is 1; i.e. we weight the later time Ø£ Ø.
+
+5
+
+Time t
+Previous Shape St Xti
+
+Time t*
+
+3b. Flow Backwards
+
+Interpolated Shape S* Xt*i
+
+3b. Flow Forwards
+
+Time t+1
+Next Shape St+1 Xt+1j
+
+3c. Project
+
+3a. Cast Ray & Intersect S*
+
+3c. Project
+
+3d. Blend
+
+3d. Blend
+
+Camera C1
+
+Camera C2
+
+Novel Image Pixel I*+(u,v)
+Camera C+
+
+Camera C1
+
+Camera C2
+
+Figure 4: Ray-casting across space and time. 3a. A ray is shot out into the scene at time Ø Ø£ and intersected with the flowed voxel model. (In Section 3.4 we generalize this to an intersection with a smooth surface fit to the flowed voxels.) 3b. The scene flow is then followed forwards and backwards in time to the neighboring time instants. 3c. The voxels at these time instants are then projected into the images and the images sub-sampled at the appropriate locations. 3d. The resulting
+samples are finally blended to give Á·£ ´Ù Úµ.
+
+The spatial component is slightly more complex because there may be an arbitrary
+
+number of cameras. The major requirement to satisfy the principle, however, is that when
+
+·
+Let
+
+the weight of the other cameras is zero. This can be achieved for time Ø as follows. ´Ù Úµ be the angle between the rays from · and to the flowed voxel Ø£ at time
+
+Ø£. The weight of pixel ´Ù Úµ for camera is then:
+
+ ½ ´½ Ó× ´Ù Úµµ
+
+È  Î ×´Ø Ù Úµ ½ ´½
+
+Ó× ´Ù Úµµ
+
+½
+
+(4)
+
+where Î ×´Ø Ù Úµ is the set of cameras for which the voxel Ø is visible at time Ø. This function ensures that the weight of the other cameras tends to zero as · approaches one of the input cameras. It is also normalized correctly so that the total weight of all of the visible cameras is 1.0. An equivalent definition is used for the weights at time Ø · ½.
+
+6
+
+In summary (see also Figure 4), ray-casting across space and time consists of the following four steps:
+3a. Intersect the ´Ù Úµ ray with ËØ£ to get voxel Ø£ . 3b. Follow the flows to voxels Ø and .Ø·½ 3c. Project Ø & Ø·½ into the images at times Ø & Ø · ½. 3d. Blend the estimates as a weighted average. For simplicity, the description of Steps 3a. and 3b. above is in terms of voxels. We now describe the details of these steps when we fit a smooth surface through these voxels, and ray-cast onto it.
+3.4 Ray-Casting to a Smooth Surface
+Flowed Voxels
+Dt*i Xt*i
+Pixel (u,v) in Image I*
+Figure 5: Ray-casting to a smooth surface. We intersect each cast ray with a smooth surface interpolated through the voxel centers (rather than requiring the intersection point to be one of the voxel centers, or boundaries.) Once the ray is intersected with the surface, the perturbation to the point of intersection Ø£ can be transferred to the previous and subsequent time steps.
+The ray-casting algorithm described above casts rays from the novel image onto the model at the novel time Ø£, finds the corresponding voxels at time Ø and time Ø · ½, and then projects those points into the images to find a color. However, the reality is that voxels are
+7
+
+Voxel Co-ordinate (xt)
+
+u2 u3 u4 Pixel Index (u)
+Figure 6: The voxel coordinate changes in an abrupt manner for each pixel in the novel image. Convolution with a simple Gaussian kernel centered on each pixel changes its corresponding 3-D coordinate to approximate a smoothly fit surface.
+
+just point samples of an underlying smooth surface. If we just use voxel centers, we are
+
+bound to see cubic voxel artifacts in the final image, unless the voxels are extremely small.
+
+The situation is illustrated in Figure 5. When a ray is cast from the pixel in the novel
+
+image, it intersects one of the voxels. The algorithm, as described above, simply takes this point of intersection to the be center of the voxel Ø£. If, instead, we fit a smooth
+
+surface to the voxel centers and intersect the cast ray with that surface, we get a slightly
+
+perturbed point Ø£ · Ø£. Assuming that the scene flow is constant within each voxel, the
+
+corresponding point at time Ø is Ø · Ø£. Similarly, the corresponding point at Ø · ½ is
+
+Ø·½ · Ø£
+
+Ø · Ø · Ø£. If we simply use the centers of the voxels as the intersection
+
+points rather than the modified points, a collection of rays shot from neighboring pixels
+
+will all end up projecting to the same points in the images, resulting in obvious box-like
+
+artifacts.
+
+Fitting a surface through a set of voxel centers in 3-D is complicated. However, the main
+
+contribution of a fit surface in our case would be that it prevents the discrete jump while
+
+moving from one voxel to a neighbor. What is really important is that the interpolation
+
+between the coordinates of the voxels be smooth. Hence, we propose the following simple algorithm to approximate the true surface fit. For simplicity, we explain in terms of time Ø£
+
+and time Ø, the same arguments hold for time Ø · ½. For each pixel Ù in the novel image that intersects the voxel Ø£ , the coordinates of
+
+the corresponding voxel at time Ø, Ø ´ÜØ ÝØ ÞØµ (which then get projected into the
+
+input images) are stored. We therefore have a 2-D array of ´Ü Ý Þµ values. Figure 6 shows
+
+the typical variation of the Ü component of Ø with Ù . Because of the discrete nature of
+
+8
+
+(a) Colored Voxel Model
+
+(b) Ray-Casting With Cubic Voxels
+
+(c) Ray-Casting With Surface Fit
+
+Figure 7: The importance of fitting a smooth surface. (a) The voxel model rendered as a collection of voxels, where the color of each voxel is the average of the pixels that it projects to. (b) The result of ray-casting without surface fitting. showing that the voxel model is a coarse approximation. (c) The result of intersecting the cast ray with a surface fit through the voxel centers.
+
+the voxels, this changes abruptly at the voxel centers, whereas, we really want it to vary smoothly like the dotted line. Therefore, we apply a simple Gaussian operator centered at each pixel (shown for Ù¾, Ù¿, and Ù ) to the function ÜØ´Ùµ to get a new value of Ü¼Ø for each pixel Ù (and similarly for ÝØ´Ùµ and ÞØ´Ùµ), that approximates the true fit surface. These perturbed values ¼Ø ´Ü¼Ø Ý¼Ø Þ¼Ø µ for each pixel in the novel image are projected into the input images as described earlier. [Bloomenthal and Shoemake, 1991] suggest the use of convolution as a way to generate smooth potential surfaces from point skeletons, although their intent is more to generate a useful representation for solid modeling operations.
+Figure 7 illustrates the importance of this surface fitting step. Figure 7(a) shows the voxel model rendered as a collection of voxels. The voxels are colored with the average of the colors of the pixels that they project to. Figure 7(b) shows the result of ray-casting by just using the voxel centers directly. Figure 7(c) shows the result after intersecting the cast ray with the smooth surface. As can be seen, without the surface fitting step the rendered images contain substantial voxel artifacts.
+4 Ideal Properties of the Scene Flow
+In Section 3.2 we described how to flow the voxel model forward to estimate the interpolated voxel model Ë£. In particular, Equation (3) defines Ë£ in an asymmetric way; the voxel model ËØ·½ at time Ø · ½ is not even used. A related question is whether the interpolated shape is continuous as Ø£ Ø · ½; i.e. in this limit, does Ë£ tend to ËØ·½? Ideally we want this property to hold, but how do we enforce it?
+One suggestion might be that the scene flow should map one-to-one from ËØ to ËØ·½. Then, the interpolated scene shape will definitely be continuous. The problem with this requirement, however, is that it implies that the voxel models must contain the same number
+9
+
+of voxels at times Ø and Ø · ½. It is therefore too restrictive to be useful. For example, it outlaws motions that cause the shape to expand or contract. The properties that we really need are:
+
+¾Inclusion: Every voxel at time Ø flows to a voxel at time Ø · ½: i.e. Ø
+
+.ËØ · Ø
+
+Ø·½
+
+Onto: Every voxel at Ø · ½ has a voxel at Ø that flows to it: Ø
+
+× Ø Ø· Ø
+
+.Ø·½
+
+These properties immediately imply that the voxel model at time Ø flowed forward to time Ø · ½ is exactly the voxel model at time Ø · ½:
+
+Ø· Ø
+
+½ ÎØ
+
+Ë Ø·½
+
+(5)
+
+This means that the scene shape will be continuous at Ø · ½ as we flow the voxel model forwards using Equation (3).
+
+4.1 Duplicate Voxels
+
+(a) Without Duplicate Voxels
+(b) With Duplicate Voxels
+Figure 8: A rendered view at an intermediate time, with and without duplicate voxels. Without the duplicate voxels, the model at the first time does not flow onto the model at the second time. Holes appear where the missing voxels should be. The artifacts disappear when the duplicate voxels are added.
+Is it possible to enforce these 2 conditions without the scene flow being one-to-one? It may seem impossible because the second condition seems to imply that the number of voxels cannot get larger as Ø increases. It is possible to satisfy both properties, however, if we introduce what we call duplicate voxels. Duplicate voxels are additional voxels at time Ø which flow to different points in the model at Ø · ½; i.e. we allow 2 voxels Ø and Ø
+10
+
+( ) where ´ÜØ ÝØ ÞØµ ´ÜØ ÝØ ÞØµ but yet Ø Ø. We can then still think of a voxel model as just a set of voxels and satisfy the 2 desirable properties above. There may just be a number of duplicate voxels with different scene flows.
+Duplicate voxels also make the formulation more symmetric. If the 2 properties inclusion and onto hold, the flow can be inverted in the following way. For each voxel at the second time instant there are a number of voxels at the first time instant that flow to it. For each such voxel we can add a duplicate voxel at the second time instant with the inverse of the flow. Since there is always at least one such voxel (onto) and every voxel flows to some voxel at the second time (inclusion), when the flow is inverted in this way the two properties hold for the inverse flow as well.
+So, given forwards scene flow where inclusion and onto hold, we can invert it using duplicate voxels to get a backwards scene flow for which the properties hold also. Moreover, the result of flowing the voxel model forwards from time Ø to Ø£ with the forwards flow field is the same as flowing the voxel model at time Ø · ½ backwards with the inverse flow. We can then formulate shape interpolation symmetrically as flowing either forwards and backwards. Whichever way the flow is performed, the result will be the same.
+The scene flow algorithm [Vedula et al., 1999] unfortunately does not guarantee either of the 2 properties. (Developing such an algorithm is outside the scope of this paper and is left for future research.) Therefore, we take the scene flow and modify it as little as possible to to ensure that the 2 properties hold. First, for each voxel Ø we find the closest voxel in ËØ·½ to Ø · Ø and change the flow Ø so that Ø flows there. Second, we take each voxel Ø·½ at time Ø · ½ that does not have a voxel flowing to it and add a duplicate voxel at time Ø that flows to it by averaging the flows in neighboring voxels at Ø · ½.
+4.2 Results With and Without Duplicate Voxels
+The importance of the duplicate voxels is illustrated in Figure 8. This figure contains 2 rendered views at an intermediate time, one with duplicate voxels and one without. Without the duplicate voxels the model at the first time instant does not flow onto the model at the second time. When the shape is flowed forwards holes appear in the voxel model (left) and in the rendered view (right). With the duplicate voxels the voxel model at the first time does flow onto the model at the second time and the artifacts disappear.
+The need for duplicate voxels to enforce the continuity of the scene shape is illustrated in the movie version of Figure 8 "duplicatevoxels.mpg" available from the first author's website http://www.cs.cmu.edu/~srv/stvi/results.html. This movie consists of a sequence of frames generated using our algorithm to interpolate across time only. (Results interpolating across space are included later.) The movie contains a side-by-side comparison with and without duplicate voxels. Without the duplicate voxels (right) the movie is jerky because the interpolated shape is discontinuous. With the duplicate voxels (left) the movie is very smooth.
+The best way to observe this effect is the play the movie several times. The first time concentrate on the left hand side, with the duplicate voxels. The second time concentrate on
+11
+
+t=1.0
+
+t=5.0
+
+t=9.0
+
+t=9.4
+
+t=9.8
+
+t=10.2
+
+t=10.6
+
+t=14.0
+
+t=13.0
+
+t=12.2
+
+t=11.8
+
+t=11.4
+
+t=11.0
+
+Figure 9: A collection of frames from a slow-motion fly-by movie of the "dance sequence." This movie was created using our interpolation algorithm. Some of the inputs are included in Figure 2. The novel camera moves along a path that first takes it towards the scene, then rotates it around the scene, and the takes it away from the dancer. The new sequence is also re-timed to be 10 times slower than the original camera speed. In the movie "dance flyby.mpg", we include a side by side comparison with the closest input image in terms of both space and time. This comparison makes the inputs appear like a collection of snap-shots compared to the slow-motion movie.
+
+the right hand side. Finally, play the movie one last time and study both sides at the same time for comparison.
+
+5 Re-Timed Fly-By Movies
+We have described a spatio-temporal view interpolation algorithm that can be used to create novel views of a non-rigidly varying dynamic event from arbitrary viewpoints and at any time during the event. We have used this algorithm to generate re-timed slow-motion fly-by movies of real events. The camera can be moved on an arbitrary path through the scene and the event slowed down to any speed.
+The input images, computed shapes and scene flows, and fly-by movies created using the spatio-temporal view interpolation algorithm are available online from the first authors website: http://www.cs.cmu.edu/~srv/stvi/results.html.
+The first movie, "dance flyby.mpg" is a fly-by movie of the "dancer sequence" that we have been using throughout this paper. Some of the inputs are included in Figure 2 as well as two voxel models and one of the scene flows.
+In the sequence a dancer turns, uncrossing her legs, and raising her arm. The input to the algorithm consists of 15 frames from each of 17 cameras. The path of the camera is initially
+
+12
+
+Example Input Images t=1
+
+t=2
+
+Camera C1
+
+Camera C2
+
+Voxel Model at t=1
+
+3D Scene Flow at t=1
+
+Figure 10: Some of the input images, and an example voxel model and scene flow used for the "dumbell" sequence.
+towards the scene, then rotates around the dancer and then moves away. Watch the floor to get a good idea of the camera motion. We interpolate 9 times between each neighboring pair of frames. In the movie "dance flyby.mpg" we show both the slow-motion fly-by and, beside it, the closest input frame in terms of both space and time. Notice how the inputs look like a collection of snap-shots, whereas the fly-by is a smooth re-creation of the event. Figure 9 shows a few sample frames from this movie.
+The movie "dumbell retimed.mpg" shows a re-timed slow-motion movie of a man lifting a pair of dumbells. Figure 10 shows some input images (9 frames from 14 cameras were used), and also an example voxel model and scene flow. Some of the motion in this sequence is highly non-rigid, notice the shirt in particular. To better illustrate this motion in the movie, we leave the novel viewpoint fixed in space. Figure 11 shows some of the sample frames from this re-timed movie sequence.
+6 Discussion
+We have described a spatio-temporal view interpolation algorithm for creating novel images of a non-rigidly varying dynamic event across both space and time. We have demonstrated how this algorithm can be used to generate very smooth, slow-motion fly-by movies of the event.
+We have also addressed the question of what the desirable properties of a 3-D scene flow field are.We have shown that by introducing duplicate voxels we can enforce the constraint that the result of flowing the model forward from time Ø is exactly the model at Ø · ½, but yet without any constraints on the number of voxels at the two time instants. At present there is no scene flow algorithm that sets out to compute a flow field with the 2 properties introduced in Section 4. Developing such an algorithm is a suitable topic for future research.
+
+13
+
+t=1.0
+
+t=1.5
+
+t=2.0
+
+t=2.5
+
+t=3.0
+
+t=3.2
+
+t=3.4
+
+t=8.0
+
+t=6.0
+
+t=5.0
+
+t=4.0
+
+t=3.8
+
+t=3.6
+
+Figure 11: A collection of frames from the re-timed slow motion movie "dumbell retimed.mpg" of the "dumbell" sequence. Notice the complex non-rigid motion of the shirt and the articulated motion of the arms.
+References
+
+[Alexa et al., 2000] M. Alexa, D. Cohen-Or, and D. Levin. As-rigid-as-possible shape interpolation. In Proc. of SIGGRAPH, pages 157­164, 2000.
+[Bloomenthal and Shoemake, 1991] Jules Bloomenthal and Ken Shoemake. Convolution surfaces. In Computer Graphics, Annual Conference Series (Proc. SIGGRAPH), pages 251­256, 1991.
+[Chen and Williams, 1993] S.E. Chen and L. Williams. View interpolation for image synthesis. In Proc. of SIGGRAPH, pages 279­288, 1993.
+[Gortler et al., 1996] S.J. Gortler, R. Grzeszczuk, R. Szeliski, and M.F. Cohen. The lumigraph. In Proc. of SIGGRAPH, pages 43­54, 1996.
+[Levoy and Hanrahan, 1996] M. Levoy and M. Hanrahan. Light field rendering. In Proc. of SIGGRAPH, 1996.
+[Manning and Dyer, 1999] R.A. Manning and C.R. Dyer. Interpolating view and scene motion by dynamic view morphing. In Proc. of CVPR, pages 388­394, 1999.
+[Narayanan et al., 1998] P.J Narayanan, P.W. Rander, and T. Kanade. Constructing virtual worlds using dense stereo. In Proc. of ICCV, pages 3­10, 1998.
+[Sato et al., 1997] Y. Sato, M. Wheeler, and K. Ikeuchi. Object shape and reflectance modeling from observation. In Proc. of SIGGRAPH, pages 379 ­ 387, 1997.
+[Seitz and Dyer, 1996] S.M. Seitz and C.R. Dyer. View morphing. In Proc. of SIGGRAPH, pages 21­30, 1996.
+
+14
+
+[Seitz and Dyer, 1999] S.M. Seitz and C.R. Dyer. Photorealistic scene reconstruction by voxel coloring. Intl. Journal of Computer Vision, 35(2):151­173, 1999.
+[Turk and O'Brien, 1999] G. Turk and J.F. O'Brien. Shape transformation using variational implicit functions. In Proc. of SIGGRAPH, pages 335­342, 1999.
+[Vedula et al., 1999] S. Vedula, S. Baker, P. Rander, R. Collins, and T. Kanade. Threedimensional scene flow. In Proc. of ICCV, volume 2, pages 722­729, 1999.
+[Vedula et al., 2000] S. Vedula, S. Baker, S.M. Seitz, and T. Kanade. Shape and motion carving in 6D. In Proc. of CVPR, volume 2, pages 592­598, 2000.
+[Wexler and Shashua, 2000] Y. Wexler and A. Shashua. On the synthesis of dynamic scenes from reference views. In Proc. of CVPR, volume 1, pages 576­581, 2000.
+15
+
+

@@ -1,0 +1,857 @@
+Interactive Animation of Cloth-like Objects for Virtual Reality
+
+Mathieu Desbrun
+
+Mark Meyer
+
+Alan H. Barr
+
+USC - Caltech
+
+Abstract
+In this chapter, we propose a stable and efficient algorithm for animating cloth-like materials using mass-spring systems. An integration scheme derived from implicit integration allows us to obtain interactive realistic animation of any mass-spring network. We alleviate the need to solve a linear system through the use of a predictor-corrector approach: We first compute a rapid approximation of the implicit integration, then we correct this estimate in a post-step process to preserve momentum. Combined with a post-step process to implement collisions and other constraints, this method provides a simple, stable and tunable model for cloth-like objects suitable for virtual reality. An implementation in a VR environment demonstrates this approach through a series of examples.
+1 Introduction
+Interactive animation of deformable objects in virtual reality (VR) systems has been a challenging problem for years. Although many fast methods of animation have been proposed, few techniques are currently able to dynamically animate even simple deformable objects at interactive rates. Moreover, animation in an immersive environment needs to be very robust and stable, to be "bullet-proof" against any action of the user. Thus, two apparently exclusive properties need to be satisfied: we need both efficiency and stability, without compromising the visual result. Although different techniques have been proposed in this book to model and animate cloth so far, VR apllications typically call for simpler models that guarantee real-time response to any user manipulation. This chapter proposes an approach that finds a new balance between efficiency and stability, enabling robust interactive VR animation, or realtime design and seaming of clothes as Fig. 1 illustrates.
+1.1 Background and motivation
+One of the simplest physically-based models over the last decade, and thus, the most likely to achieve real-time performances, is the massspring system [Mil88, LJF+91, CHP89]. A deformable body is approximated by a set of masses linked by springs in a fixed topology. This model can be seen as a discrete approximation of a finite-element method for integrating the Lagrange partial derivative equation of motion [TPF89]. It is easy to implement, is highly parallelizable, and involves few computations. It seems a perfect candidate for simple virtual reality applications. Recently, improvements to this model have been made, such as an inverse dynamics step to bound the stretch of springs[Pro95]. Adaptive time stepping to preserve the system's global energy has also been proposed [Jou96].
+
+Figure 1: Picture captured during a live session using our cloth model. The skirt was wrapped around the waist and seamed at the hip in real time.
+Unfortunately, all of these approaches suffer from the same problem: the time step squared must be inversely proportional to the stiffness, or the solution could become unstable and diverge. Even if this is not an issue for off-line computation, it prevents many uses in real-time applications since very small time steps are required to ensure stability. Various ways to overcome this problem have been used. An extensive dissipative force, opposite to the velocity of a mass point, provides a good way to maintain the stability of the integration. However, this method introduces an implausibly low terminal velocity, resulting in slow viscous motions as if the medium were made of molasses. Gravity is also often reduced to avoid large forces in the system, but once again, it introduces undesirable alteration in realism.
+Other approaches have animated deformable objects of fixed topology. Elasticity and visco-elasticity have been modeled [TPBF87, TW88, TPF89], but these methods suffer from the same time step handicap. Global methods, gaining efficiency by restraining the possible deformation [PW89, WW90], are perfect for interactive manipulation, but offer limited realism.
+
+To the authors' knowledge, only two existing models achieve real-time computation for deformable structured objects. The first [CDA96] is derived from the finite element theory, and takes advantage of linear elasticity to allow real-time deformation of any meshed objects. However, this model is not dynamic, but is rather a collection of static postures, which greatly limits its applications. The other model is the recent development of neuro-animators [GTH98]: after a learning period, a large neural network can emulate a simple physical system. This recent approach has not been proven practical for large coupled systems such as cloth.
+The use of implicit integration, which can stably take large time steps, has been proposed [BW98] in the context of cloth animation. This method, described in the previous chapter, offers significantly reduced computational times, which may lead to real-time animation of simple objects in the near future. Inspired by this approach, in this chapter we propose a fast and stable way to animate mass-spring systems.
+1.2 Overview
+Adopting the idea of implicit integration, we reformulate the equations in terms of low-pass filtering.We then propose a predictor-corrector approach to alleviate the computational burden of solving a linear system at each time step: we introduce an approximation of the implicit integration to predict the next position, and then correct this approximation to ensure two major physical invariants. The resulting algorithm is similar to a regular explicit Euler integration scheme, with a significant improvement: stability is ensured for arbitrarily large time steps. Finally, we mix this method with an iterative constraint enforcement technique to adjust the approximation made in the integration, to add nonlinear behavior, and to deal with collisions.
+The remainder of this chapter is organized as follows: Section 2 details the principle and the consequences of implicit integration applied to a 1D mass-spring system. We present our integration scheme in Section 3, by explaining the approximation made to obtain stability and efficiency, and showing how to eliminate most of the errors created. Section 4 briefly mentions an existing post-step modification we use to implement constraints, collisions, and to enhance the realism. We finally give pseudo-code of our method and explain some implementation choices in Section 5, before showing some results in Section 6 and concluding in Section 7.
+2 Implicit integration: 1D case
+While implicit time integration was used in early work on deformable bodies [TPBF87], only two recent papers extensively focus on the advantages of such a method [Kas97, BW98]. In order to understand exactly what the implicit integration scheme does, let us start by detailing the simplest 1D case of mass-spring system.
+2.1 Notation
+Throughout this section, we will use the following notation:
+· x is the geometric state of the system, consisting of all the 3D positions xi of the mass points: x = (x1, x2, ..., xn)T .
+· v is the 3n dimensional vector containing the velocities of all the mass points: v = x .
+· The vector Fi denotes the internal forces (due to springs) acting on a mass point i, whereas Feixt will denote the external forces such as gravity.
+· Superscript indices on the various vectors indicate the time beginning with an arbitrary time t0. For instance, xni = xi(t0 + n dt).
+· We will also make use of n+1, the backward difference operator: n+1x = xn+1 - xn.
+2.1.1 Physical model in 1D
+Suppose we have a 1D model in which each discrete mass point i of mass m at position xi is linked to its two immediate neighbors by a spring of stiffness k (Figure (2)). This simple test case will allow us to clearly exhibit the differences between implicit and explicit integration.
+
+Figure 2: 1D case: masses linked by springs.
+
+2.1.2 Time integration scheme
+
+To animate such a system, the following explicit Euler integration scheme can be used:
+
+vni +1
+
+=
+
+vni
+
++
+
+Fni
+
+dt m
+
+xin+1 = xin + vni +1 dt.
+
+(1)
+
+Note that in the explicit Euler method, the forces at time tn contribute to the velocities at time tn+1. Higher-order schemes, like RungeKutta, are better in terms of numerical accuracy for smooth solutions. However, since we often have to handle collisions (which gives rise to discontinuities in the motion during animation), these schemes are not appropriate in our context.
+Despite its ease of implementation, the explicit Euler scheme requires an integration time step dt which must be inversely proportional to the square root of the stiffness (this criterion is more generally known as the Courant condition [ZT91]). Otherwise, the system will blow
+
+up rapidly since assuming the internal forces as constant over too large a time step often induces a wild change in position. In practice, we effectively notice a stable behavior of the system only for very small time steps. This is the general problem of stiff sets of equations: stability can be achieved only at very small time scale with explicit schemes [PTVF92].
+Another scheme, called implicit Euler integration, has proven to be much better adapted to such a problem [Kas97, BW98]. The idea is to replace the forces at time t by the forces at time t + dt:
+
+vni +1
+
+=
+
+vni
+
++ Fni +1
+
+dt m
+
+xin+1 = xni + vni +1 dt
+
+(2)
+
+This simple substitution enforces stability in a distinct way: now, the new positions are not blindly reached, but they correspond to a state where the force field is coherent with the resulting displacement. We still consider the forces to be constant within the time step, but in theory, whatever the value of the time step, the output state of the system will have consistent forces that will not give rise to instabilities. To put it a different way, we can say that an explicit scheme takes a step into the unknown only knowing the initial conditions, while an implicit scheme tries to land on the next position correctly.
+To implement this scheme, we must compute Fn+1 without yet knowing the positions of the masses at time t + dt. Fortunately, we can write a first-order approximation (which is actually exact for springs):
+
+Fn+1 = Fn + F n+1x. x
+
+(3)
+
+As the internal forces of the system Fi
+
+are already proportional to the gradient of an internal energy, we note that the matrix H
+
+=
+
+F x
+
+is
+
+actually the negated hessian matrix of the system. In our present 1D case, we have:
+
+ -1 1 0 0 . 0 0 0 0 
+
+H = k 
+
+1 0 . 0 0
+
+-2 1 0 . 0 0 0 1 -2 1 . 0 0 0
+. . ... . . 0 0 0 . 1 -2 1 0 0 0 . 0 1 -2
+
+0 0 . 0
+
+
+
+1
+
+0 0 0 0 . 0 0 1 -1
+
+(4)
+
+Now, substituting Equ. (3) into Equ. (2), and by writing: n+1x = (vn + n+1v) dt, we find:
+
+(I - dt2 H)n+1v = (Fn + dt Hvn) dt . mm
+
+(5)
+
+2.2 Difference between explicit and implicit
+Since H is constant in this 1D case, the implicit scheme does not appear fundamentally far from the explicit one. In the next sections, we take a closer look at the differences and propose a simple interpretation through a signal processing analogy.
+
+2.2.1 Addition of artificial viscosity
+First, we can see that some extra forces F~n = dt Hvn are added to the set of internal forces Fn in the right hand side of Equ. 5. For a given mass point i, we remark that the additional force F~i can be written as follows, thanks to the structure of H:
+
+F~i = k dt
+
+(vj - vi).
+
+j|(i, j)  Edges
+
+The sum of the relative velocity with the neighbors has been used several times in the past as artificial viscosity to create a dissipative force in mass-spring or particle systems [MP89, DG95], or in Rayleigh damping forces. It intuitively means that the motion of a mass point is influenced by the motion of its neighbors: a particle will tend to follow the local displacement. In the implicit integration, this articifial viscosity is proportional to both the time step and the stiffness of the material instead of being tuned manually. As these two parameters are directly responsible for the instabilities in an integration process, we "cushion" the force field by using just the right amount of viscosity, therefore adding stability.
+
+2.2.2 Filtering of the force field
+
+Once an artificial viscosity has been added, we find the corresponding change of velocity through multiplication of the resulting force by the
+
+inverse
+
+of
+
+a
+
+constant
+
+matrix.
+
+This
+
+matrix
+
+(I -
+
+dt2 m
+
+H)
+
+has
+
+many
+
+nice
+
+properties.
+
+First,
+
+since
+
+H
+
+is
+
+a
+
+hessian
+
+matrix,
+
+it
+
+is
+
+symmetric.
+
+More
+
+importantly, H has a zero eigenvalue for the eigenvector (1, 1, ..., 1)T as a global translation of the mass-spring system does not create a
+
+change
+
+in the
+
+internal
+
+forces.
+
+As
+
+a
+
+consequence,
+
+the
+
+matrix
+
+W
+
+=
+
+(I
+
+-
+
+dt2 m
+
+H )-1
+
+has
+
+an
+
+eigenvalue
+
+of
+
+1
+
+for
+
+the
+
+same
+
+eigenvector.
+
+We
+
+can
+
+then write:
+
+n
+
+j, Wij = 1,
+
+i=1
+
+W
+1
+
+k dt2 << 1 m
+
+k dt2 ~ 1 m 1/n
+
+k dt2 >> 1 m
+mass #
+
+Figure 3: A typical filter W , and two extreme cases: extremely rigid (Constant filter, equivalent to pure translation) and extremely loose (Dirac filter, equivalent to the explicit Euler integration).
+
+meaning that each line of W sums to 1. Therefore, the multiplication of the force field by W corresponds to a type of filtering, as noted by Kass [Kas97]. The resulting smoothed forces are a discrete convolution between the force field and this set of filters W . Due to the simple structure of H in 1D, we note that the filters are Fibonacci sequences: because of the tridiagonal structure of H, there is a recurrence relation between every three successive terms of the filters.
+In the extreme case kdt2/m << 1, we get almost a Dirac filter, meaning that for low stiffness or small time steps, the implicit integration is basically equivalent to an explicit one. In the other extreme case (kdt2/m >> 1) where either the stiffness or the time step is significant, we will have an almost constant filter, meaning that the mass points will all translate together as in a rigid body motion. In between, filters will look like the one depicted in Fig. 3. We then get a better understanding of the efficiency of such an integration: the stiffer springs are, the wider filters are. The resulting force on a mass point will take into account all the forces around, smoothing the possible large difference of net force between a mass point and its immediate neighbors. Another way to express the same idea is to say that this scheme propagates the information through the whole material during a single time step, instead of just affecting the immediate neighbors in the explicit integration, and thus does not require a limit on the time step size.
+Finally, notice how H has the structure of a Laplacian: the implicit integration is very similar to an implicit fairing of the force field [DMSB99], giving another interpretation as a filtering of high frequencies in the force field. Indeed, at a given time step, frequency higher than the Nyquist limit cannot be handled properly without giving rise to divergence. By filtering the force field according to the time step, we circumvent this issue, ensuring a stable behavior while providing the correct global behavior.
+
+2.3 Discussion
+Implicit integration seems to suit the animation community well: it offers a way to create stable animations, without having to tune unintuitive damping coefficients. More importantly, it allows the time step to be set much higher without problem, which reduces the computational time for a given portion of animation. Therefore, as shown in the 1D case, explicit integration seems less suited to interactive animation. Nevertheless, we have to mention that we do gain stability by losing accuracy. Indeed, using an implicit integration smoothes the force field and adds viscosity, which introduces drift compared to the theoretical evolution of the system. Moreover, as soon as the system is in 2D or 3D, the hessian matrix changes at each time step even for springs, which requires the solution of a large, ever-changing linear system.
+In an animation context, these two last flaws are not real limitations. First, damping forces are frequently added to a system for both realism and stability anyway, so the fact that an implicit integration adds them directly without any need for tuning is probably better for the user. And even if solving a large linear system takes time, the advantages in the overall computational time are undoubtfully significant as shown in [BW98].
+
+3 An extension to 2D and 3D
+In this section, we propose a different way to integrate the motion of any mass-spring system. A simple approximation allows us to advance the mass positions with the ease of an explicit Euler scheme, maintaining the stability properties of an implicit integration scheme. We give pseudo-code for the overall algorithm in Fig. 6.
+3.1 Physical model
+We now consider a general mass-spring network in 2D or 3D, which is any set of mass points linked by springs. For the sake of generality, we will consider that a mass point i is linked to all the others with springs of rest length li0j and stiffness kij . This latter stiffness value is set to zero if the actual model does not contain a spring between masses i and j.
+The network can be defined according to the cloth we want to simulate. A regular lattice makes sense for woven material, therefore we used this very simple model in this chapter (see Figure (7)). Additional springs linking further neighbors can add a stiffer behavior, and fewer springs may be used to simulate seams by weakening a given direction. We can also randomize the positions of the nodes to optimize the number of masses used for a given surface area; rest lengths are then adapted in consequence.
+
+3.2 Implicit integration
+
+To use implicit integration, we must compute the hessian matrix of the system. In contrast to the 1D case, we no longer have a simple, constant matrix. For instance, for a spring between mass i and mass j, the force at i is proportional to the current elongation:
+
+F(i,j)
+
+=
+
+-kij (||xi
+
+-
+
+xj ||
+
+-
+
+li0j
+
+)
+
+(xi ||xi
+
+- -
+
+xj xj
+
+) ||
+
+.
+
+Therefore, we have:
+
+ F(i,j ) xi
+
+= -kij
+
+||xi - xj || - li0j ||xi - xj ||
+
+I3
+
++
+
+li0j
+
+(xi
+
+- xj)T (xi - xj ) ||xi - xj ||3
+
+We need to compute a 3n × 3n matrix with sums of such expressions, and then solve the linear system at each time step. This amounts to applying the method used in [BW98] to a mass-spring system. We propose an alternative approach which eliminates the need to solve a linear system through an approximation of this matrix.
+
+3.3 Splitting the problem in two As computing the derivative of the spring forces is quite expensive, we prefer splitting the force in two parts:
+
+F(i,j) = -kij (xi - xj )
+
++
+
+kij
+
+li0,j
+
+(xi ||xi
+
+- -
+
+xj ) xj ||
+
+We now show how to efficiently perform an approximate integration of these two parts by taking advantage of the implicit integration detailed above.
+
+3.3.1 Integrating the linear forces
+The linear part -kij (xi - xj) represents the force that would act in the same mass-spring system if all the rest lengths were zero, thus shrinking the simulated object. But, as seen in Section 2, forces that are linear in position are easy to integrate: the hessian matrix is constant in this case. In our framework, we can directly write the matrix Hlinear as an n × n matrix1 as follows:
+
+H linear
+ij
+
+=
+
+kij
+
+H linear
+ii
+
+=
+
+-
+
+j=i kij
+
+if i = j
+
+(6)
+
+As in the 1D case, we can compute the filter matrix W once, and use it to provide a stable integration regardless of what the time step is. Integrating these linear forces in a robust and stable way is thus very simple.
+
+3.4 Integrating the nonlinear forces
+
+The other part, nonlinear, is less intuitive but has the nice feature of always being of the same magnitude.
+
+It means that kij li0,j
+
+(xi-xj ) ||xi-xj ||
+
+between t and t + dt will just rotate, without varying in magnitude. In our integration predictor, we simply decide to overlook the rotation,
+
+and suppose that this nonlinear part will stay constant, which amounts to considering the hessian matrix Hnonlinear as being zero. Therefore, the
+
+previously derived matrix H (Equ. 6) is the hessian matrix for the whole system of forces.
+
+Two main reasons have motivated our choice for this approximation: first, as these nonlinear forces do not change in magnitude, the predic-
+
+tion mainly introduces an error in angle. The second reason is that we can simply account for this error in angle later, with a straightforward
+
+post-step displacement as we are going to explain next.
+
+3.5 Correction of momentum
+To validate a time integration scheme, it is important to check that linear and angular momenta are preserved. In our case, it will enable us to correct the integration.
+
+3.5.1 Preservation of linear momentum
+One of the most important features in animation is the preservation of linear momentum, as any error here will directly affect the motion in an awkward way. Fortunately, the implicit integration scheme preserves this quantity, in spite of the artificial viscosity and the filtering. Indeed, we note that the sum of all the artificial viscosity forces is zero:
+
+nn
+F~i = dt
+
+i=1
+
+i=1
+
+n
+kij (vj - vi)
+j=1
+
+1Actually, the real Hessian matrix should be 3n × 3n, but as each entry is a constant times the 3 × 3 identity matrix, we store only the constant as both memory requirements and computational time are then optimized.
+
+= dt kij [(vj - vi) + (vi - vj)] = 0
+i<j
+
+Similarly, the filtering of the force field doesn't affect the linear momentum since, knowing that j=1..n Wij = 1, we can write:
+
+vni +1 = vin + dt
+
+n j=1
+
+Fj
+
+Wij
+
+m
+
+n
+
+=
+
+vin
+
++
+
+dt Fi m
+
++
+
+dt m
+
+(Fj - Fi)Wij.
+
+j=1
+
+Then, we can further write:
+
+i=1..n
+
+(Fj - Fi)Wij
+j=1..n
+
+= (Fj - Fi)Wij = 0
+all (i, j)
+
+as W is symmetric. Therefore, the motion of the center of gravity is the same as in the explicit case.
+
+3.5.2 Preservation of angular momentum
+
+Another important physical quantity is the angular momentum. As with linear momentum, any loss may be noticed immediately. Regrettably, our integration scheme doesn't preserve this quantity. In practice, the stiffer the springs, the bigger the loss, which is not surprising since we made a deliberate approximation that introduces angular errors.
+Fortunately, we can balance this loss by a small alteration of the mass positions, Once the internal forces have been filtered (i.e., multiplied by the constant matrix W ), we can compute the resulting global torque T :
+
+n
+
+T =
+
+(xG
+
+-
+
+xi)
+
+
+
+Ffiltered
+i
+
+i=1
+
+where xG is the center of gravity. This torque should be zero, so we need to modify the integration output to balance it. We can simply add
+
+the correction vector:
+
+Rcorrec
+i
+
+=
+
+(xG
+
+-
+
+xi)
+
+
+
+T
+
+dt2 m
+
+on each mass point. This expression is found by making the assumption of a diagonal inertia matrix, and by linearly approximating the rotation: the torque error over a time duration dt is then corrected by a small global rotation. Although more accurate expressions would be easy to derive, we found these approximations to be satisfactory. Note that the sum of all these correction terms is zero, so that this deformation field just corrects the angular momentum without affecting the linear momentum. We do not have a zero-error scheme, as we only compensate for the overall torque error, and may miss local variations of torques. But tests show that the behavior begins to be implausible only for high stiffness or very large time steps, which will be addressed in Section 4.
+
+3.6 Discussion
+Once the angular momentum has been re-adjusted, the animation obtained using the above scheme is satisfactory for moderate stiffness. However, as local torques have been overlooked, this simplified scheme performs badly for high stiffness without a post-correction process: even if the animation remains stable, we obtain wrinkled meshes. We thus have to add a post-correction, the subject discussed in the next section.
+
+4 Post-step Constraint Enforcement
+4.1 Motivation
+Springs are certainly not a perfect physical model for real clothes or real deformable objects. Roughly speaking, their elongation is proportional to the force applied, which may result in implausibly large deformation. The common force/deformation curve for a material is nonlinear as sketched in Fig. 4, so we must modify the behavior of our mass-spring system to make it more realistic. One way to achieve this is to add a post-correction phase after a time step. This post-correction can then be considered as a constraint enforcement: all the mass points are first advanced normally, then we modify their positions to enforce a desired constraint. Various approaches have proposed to iterate small displacements until constraints are met [GG94, Ove91, Fau98].
+4.2 Iterative Constraint Enforcement Process
+For our applications, we use an adequate and straightforward post-step modification of mass points to eliminate large stretch as defined in [Pro95], where more details can be found. The underlying idea is the following: each time a spring is over-stretched, bring the two extreme mass points together along their axis while preserving the position of the center of gravity of these two masses. If one of the two mass points is constrained at a given position, just move the other one to ensure a reasonable elongation. By doing this for each spring and iterating, the resulting position both satisfies the external constraints (if the mass-spring system is grabbed for instance) and simulates a nonlinear behavior
+
+Displacement dmax
+
+Non-linear elasticity region
+
+Linear elasticity region
+Force
+Figure 4: Force/Displacement curve simulated by our model
+
+as springs are shrunk if there is an unwanted stretch. As this method does not involve forces, stability is not an issue. Since it is similar to a Jacobi iteration, the convergence properties may not be ensured; however, in our case where accurate convergence is not needed, this does not cause any troubles.
+4.3 Implementation
+In practice, we define a normalized threshold dmax which represents the limit of proportionality in the desired force/deformation curve for our springs. Then we iterate over the springs exceeding this threshold and shrink them as explained in the previous paragraph. The criterion to end the iteration can be chosen in various ways: either after a predefined number of iterations (which seems sufficient according to our tests), or until convergence is reached (but we may then lose real-time performance), or even until convergence is reached or time is up (as we need to display new positions at interactive rates). As this phase is only a "polishing" process, stopping the iterations before final convergence doesn't create noticeable visual artifacts. This simple procedure provides the final touch to complete our model: we now have a way to simply deal with constraints due for instance to collision or user interaction. And as this process (or any other having the same properties) keeps the mass-spring system from being over-stretched, it enhances the realism of the overall animation.
+
+Figure 5: Left: after one step of implicit integration, large deformation appears near the grabbed mass point, and constraints are sometimes not met. Right: after the constraint enforcement process, we ensure both a more natural look of the material and the enforcement of constraints.
+5 Implementation and Additions
+We sum up the whole process in the following pseudo-code (see Fig. 6). An inspection of this algorithm shows that the theoretical complexity, not including the off-line precomputation of W , should be quadratic in the number of mass points because W is not sparse as H is. However, the convolution of the force field with W is actually performed quite efficiently compared to the evaluation of the forces themselves. The observed overall complexity thus turns out to be linear for the range we aimed at (number of mass points < 2000), regardless of stiffness or time step.
+While our model behaves realistically when internal forces and gravity are taken into account, it cannot yet interact with more complex environments through either additional external forces like wind or through collisions with objects. We explain next how to implement these additional features that will improve the visual complexity of the motion in a virtual environment.
+5.1 Drag force for wind or fluid flow
+The addition of nonlinear external forces, such as the wind, would greatly enhance the realism of the simulation, especially for fabrics. In order to incorporate these nonlinear forces into the implicit integration, we would need to compute the hessian matrix of the forces at every time step, a very expensive operation. These forces being external, we cannot use our simple implicit-based algorithm either (no obvious invariant to preserve). However, as these external forces are usually much smaller than the internal forces of the object, we propose to explicitly integrate these external forces.
+We use a nonlinear formulation in accordance with fluid laws in physics. Each mass point having approximately the same small surface area2, we assign a drag force due to wind to a mass i such as:
+2Once again, we restrict our explanations to fabric-like material. Real 3D objects would be considered as exposed to wind only for mass points on the surface of the object, internal mass points being not affected by wind.
+
+Precompute W
+
+=
+
+(In
+
+-
+
+dt2 m
+
+H)-1
+
+At each time step dt
+
+//Reset the barycenter
+
+xG = 0
+
+//Compute internal forces Fi
+
+//due to springs and artificial viscosity.
+
+For each mass point i
+
+Fi = 0 xG+ = xi
+
+For each mass point j such as (i, j) linked by a spring
+
+Fi+
+
+=
+
+kij
+
+(||xj
+
+-
+
+xi ||
+
+-
+
+l0ij
+
+)
+
+xj ||xj
+
+-xi -xi
+
+||
+
+Fi+ = kij dt (vj - vi)
+
+//Final value of barycenter
+
+xG/ = n T = 0
+
+// Integrate the approximation (predictor, see [DSB99])
+
+For each mass point i
+
+Fifiltered =
+
+j Fj Wij
+
+T + = Fifiltered  xi
+
+vinew = vi +
+
+Ffiiltered + g
+
+dt m
+
+xinew = xi + vniew dt
+
+// Post correction of angular momentum (corrector, see [DSB99])
+
+For each mass point i
+
+Ricorrec = (xG - xi)  T
+
+xinew +
+
+=
+
+Rciorrec
+
+dt2 m
+
+// Add external secondary forces such as wind
+
+For each mass point i
+
+xniew +
+
+=
+
+Fdirag
+
+dt2 m
+
+// Now, use the iterative constraint enforcement process (see Section 4)
+
+nbIter = 0
+
+do
+
+Post-step constraint enforcement (as in [Pro95] for instance)
+
+Detect collisions and bring back masses onto contact surface.
+
+nbIter = nbIter + 1
+
+until (error < ) or (nbIter > nbIterMax) or (time is up!)
+
+// Update real velocity and position
+
+vi xi
+
+= =
+
+x(xnieinwew
+
+-
+
+xi)/dt
+
+Figure 6: Pseudo-code of our algorithm.
+
+Fdrag
+i
+
+=
+
+Kdrag
+
+||vwi ind||
+
+(ni
+
+·
+
+vwind
+i
+
+)
+
+ni.
+
+(7)
+
+In
+
+this
+
+equation,
+
+Kdrag
+
+is
+
+a
+
+coefficient
+
+selected
+
+by
+
+the
+
+user,
+
+vwind
+i
+
+is
+
+the
+
+velocity
+
+of
+
+the
+
+wind
+
+(or
+
+any
+
+other
+
+fluid)
+
+at
+
+the
+
+position
+
+of
+
+mass
+
+point
+
+i, and ni is the normal to the simulated surface at this same point. This latter vector can be easily approximated by the following equation:
+
+ni =
+
+(xj neighbors of i i - xj ) (xj neighbors of i i - xj )
+
+since all the distances between mass point i and its neighbors stay approximately constant. In such conditions, this approximation is valid [DMSB99]. If the former sum turns out to be zero, then ni can simply be measured as a normalized cross product using any two neighboring masses j and k: ni = ((xj - xi)  (xk - xi))/||((xj - xi)  (xk - xi))||.
+Perfect respect of physical laws would require vwind to be a relative velocity, meaning the difference between the wind velocity and the mass point velocity. But after some tests, we noticed that using only the wind velocity results in sufficiently realistic effects. Using the relative velocity doesn't improve significantly the quality of the results, and it also can create problems of stability as now, this speed can be arbitrarily large depending on how fast the user waves the object. To stay on the safe side whatever happens, we finally decided to used the simplified, yet satisfactory wind velocity alone.
+
+5.2 Collision Detection and Response
+Our current implementation uses a very simple plastic collision model, perfectly adequate for cloth, where mass points are pulled back on the surface of the obstacles and have their normal velocity cancelled. The collision detection, which can be very costly if done naively, is performed through a method very much along the lines of [MPT99], using voxels to accelerate the inside/outside tests. Although there are various other methods to detect and handle collisions in a more sophisticated way, we found this particular approach suffienctly fast and realistic for real-time applications.
+
+(a) (b) (c)
+(d) (e) Figure 7: (a)­(c): Various rest positions for different stiffnesses obtained during a real-time session. (d)&(e): The scarf is put on two obstacles, and slides in between. Time step used: 0.01.
+6 Results
+We implemented our technique in 2D and 3D. We tested it with cloth-like material first, but also tried it with volumetric objects that you can press or pinch. We used an immersive environment, namely the Responsive Workbench [KF94], to be able to virtually manipulate the animated objects. We allow the user to grab the piece of cloth with a stylus (a mouse with 6DOF), and move it around the scene containing a ground plane and diverse simple or complex obstacles, with friction on them all. It is important to note here that no external damping friction or visually-unappealing low gravity was needed to achieve stable results.
+6.1 Quality of results The visual results indicate that the approximated implicit integration mixed with the post-step process achieves simulation of deformable objects very well. Even without force-feedback devices, one can really feel as if manipulating either a piece of cloth, or a soft object. Figures (7) and (8) show various snapshots obtained during such virtual reality sessions, with different stiffnesses ranging from zero (no internal forces, so only the constraint enforcement process is applied, resulting in simulation of a mesh made of rigid rods, like chain mail) to 106. We also tried to add damping in the system, as W is still constant in this case. Our tests of whether such an additional parameter is worthy for an animator were inconclusive. Needless to say that such a range of stiffness simulated using an explicit scheme would have required time steps of the order of 10-6 minimum to be stable. In our experiments, we used dt = 0.01.
+6.2 Video with examples We filmed various examples in our VR environment to demonstrate the robustness and efficiency of this technique [MDDB00]. We now detail some of the examples shown in this video.
+The basic scarf The first animation shows the basic algorithm (see Figure (9)). The user manipulates a sort of scarf, with rudimentary obstacles (namely, a sphere and a box). Even in this simplistic environement, the motion we obtained is realistic, and the illusion is there. The scarf can be thrown away, put on an obstacle, dragged along the floor, etc. We insist on the fact that this demo is unconditionally stable, regardless of how the user may try to break the algorithm. We also introduce gusts of wind to improve realism. Even with our simple drag force, we obtain realistic wind flapping.
+Interaction with a river Using exactly the same algorithm, we make a compelling example where the scarf (displayed as a fishing net), when put into the flowing water, gets dragged along with the current (see Figure (10)c). The flowing water is made out of an animated texture, translated at a constant speed.
+
+Figure 8: Different hanging postures of a cloth-like material animated with our algorihtm
+Figure 9: Picture captured during live sessions in a VR environment: A silk scarf is moved around in a scene with obstacles in real-time.
+Variations: Office draping, superman and the flag pole Finally, we present other interesting effects still in real-time, such as interactive draping of a relatively complex office scene (Figure (10)a), or the effect of the wind on the cape of a (rather simplistic) super-hero (see Figure (10)b). Now, we control the direction of the wind in real-time with the stylus. We also present the animation of flag on a pole. The user starts to anchor the flag to the pole by constraining points, and can then activate the gusting wind, controlled by the stylus once again (see Figure (10)d).
+7 Conclusion & Discussion
+We have presented a new algorithm to animate efficiently cloth-like materials in Virtual Reality. As we can perform the time integration for any time step size with a constant computational time, our method is perfectly designed for real-time interaction in virtual reality environments. The algorithm is an approximated implicit integration scheme, but we preserve important physical quantities such as linear and angular momenta, vital for realism. This technique can thus be classified as an implicit predictor/corrector scheme. It handles constraints and collisions in a very simple way, and uses nonlinear springs that enhance the visual behavior of the motion.
+We do not claim to have great generality. Although this approach is very convenient for Virtual Reality where bullet-proof and real-time methods are needed, this kind of approximation cannot be used for more accurate simulations. But we believe that a clear undestanding of implicit integration may be the key to more general approaches. Seeing the integration process as a smoothing process, to get rid of high frequencies, is particularly important for anyone willing to obtain robust animation with a fixed time step. It is also closely related to
+
+(a) (b)
+
+(c) (d) Figure 10: (a) Complex obstacles-- an office. (b) A caped crusader. (c) Interaction with a river. (d) A flag, flapping.
+Laplacian smoothing in modeling, as explored in [Tau95, DMSB99]. The correction step introduced is also interesting as it provides a useful sanity-check that will ensure the preservation of vital invariants, as symplectic methods do.
+
+8 Acknowledgments
+The research reported in this chapter was in part reported in a Graphics Interface paper [DSB99]. This enhanced version could not have been achieved without the help and support from Peter Schro¨der and Gilles Debunne.
+
+References
+
+[BW98] David Baraff and Andrew Witkin. Large steps in cloth simulation. In Michael Cohen, editor, SIGGRAPH 98 Conference Proceedings, Annual Conference Series, pages 43­54. ACM SIGGRAPH, Addison Wesley, July 1998.
+
+[CDA96] Ste´phane Cotin, Herve´ Delingette, and Nicolas Ayache. Real time volumetric deformable models for surgery simulation. In Proceedings of Visualization in Biomedical Computing, volume Lectures Notes in Computer Science, volume 11, September 1996.
+
+[CHP89] John E. Chadwick, David R. Haumann, and Richard E. Parent. Layered construction for deformable animated characters. Computer Graphics, 23(3):243­252, July 1989.
+
+[DG95]
+
+Mathieu Desbrun and Marie-Paule Gascuel. Animating soft substances with implicit surfaces. In SIGGRAPH 95 Conference Proceedings, Annual Conference Series, pages 287­290. ACM SIGGRAPH, Addison Wesley, August 1995. Los Angeles, CA.
+
+[DMSB99] Mathieu Desbrun, Mark Meyer, Peter Schro¨der, and Alan Barr. Implicit fairing of irregular meshes using diffusion and curvature flow. In SIGGRAPH 99 Conference Proceedings, 1999. Los Angeles, CA.
+
+[DSB99] Mathieu Desbrun, Peter Schro¨der, and Alan Barr. Interactive animation of structured deformable objects. In Graphics Interface'99 proceedings, 1999.
+
+[Fau98]
+
+Franc¸ois Faure. Interactive solid animation using linearized displacement constraints. 9th Eurographics Workshop on Computer Animation and Simulation, September 1998.
+
+[GG94]
+
+Jean-Dominique Gascuel and Marie-Paule Gascuel. Displacement constraints for interactive modeling and animation of articulated structures. The Visual Computer, 10(4):191­204, March 1994. An early version of this paper appeared in the Third Eurographics Workshop on Animation and Simulation, Cambridge, UK, Sept 92.
+
+[GTH98]
+
+Radek Grzeszczuk, Demetri Terzopoulos, and Geoffrey Hinton. Neuroanimator: Fast neural network emulation and control of physics-based models. In Michael Cohen, editor, SIGGRAPH 98 Conference Proceedings, Annual Conference Series, pages 9­20. ACM SIGGRAPH, Addison Wesley, July 1998.
+
+[Jou96]
+
+Ammar Joukhadar. Adaptive time step for fast converging dynamic simulation system. In Proc. of the IEEE-RSJ Int. Conf. on Intelligent Robots and Systems, volume 2, pages 418­424, November 1996.
+
+[Kas97] Michael Kass. An introduction to continuum dynamics for computer graphics. In SIGGRAPH Course Notes. ACM SIGGRAPH, 1997.
+
+[KF94] [LJF+91]
+
+W. Krueger and B. Froehlich. The responsive workbench (virtual work environment). IEEE Computer Graphics and Applications, 14(3):12­15, May 94.
+A. Luciani, S. Jimenez, J-L. Florens, C. Cadoz, and O. Raoult. Computational physics: a modeler simulator for animated physical objects. In Eurographics'91, Vienna, Austria, September 1991.
+
+[MDDB00] Mark Meyer, Gilles Debunne, Mathieu Desbrun, and Alan Barr. Interactive animation of cloth-like objetcs in virtual reality. In IEEE Virtual Reality'2000 Video Proceedings, 2000. New Brunswick, NJ.
+
+[Mil88]
+
+Gavin Miller. The motion dynamics of snakes and worms. Computer Graphics, 22(4):169­177, August 1988. Proceedings of SIGGRAPH'88 (Atlanta, Georgia).
+
+[MP89]
+
+Gavin Miller and Andrew Pearce. Globular dynamics: A connected particle system for animating viscous fluids. Computers and Graphics, 13(3):305­309, 89. This paper also appeared in SIGGRAPH'89 Course notes number 30.
+
+[MPT99] William A. McNeely, Kevin D. Puterbaugh, and James J. Troy. Six degree-of-freedom haptic rendering using voxel sampling. In SIGGRAPH 99 Conference Proceedings, 1999. Los Angeles, CA.
+
+[Ove91] C. Van Overveld. An iterative approach to dynamic simulation of 3-D rigid-body motions for real-time interactive computer animation. The Visual Computer, 7:29­38, 1991.
+
+[Pro95]
+
+Xavier Provot. Deformation constraints in a mass-spring model to describe rigid cloth behavior. In Graphics Interface, pages 147­154, June 1995.
+
+[PTVF92] William Press, Saul Teukolsky, William Vetterling, and Brian Flannery. Numerical Recipes in C, second edition. Cambridge University Press, New York, USA, 1992.
+
+[PW89]
+
+Alex Pentland and John Williams. Good vibrations: Modal dynamics for graphics and animation. Computer Graphics, 23(3):215­222, July 1989. Proceedings of SIGGRAPH'89 (Boston, MA, July 1989).
+
+[Tau95]
+
+Gabriel Taubin. A signal processing approach to fair surface design. In Robert Cook, editor, SIGGRAPH 95 Conference Proceedings, Annual Conference Series, pages 351­358. ACM SIGGRAPH, Addison Wesley, August 1995.
+
+[TPBF87] Demetri Terzopoulos, John Platt, Alan Barr, and Kurt Fleischer. Elastically deformable models. Computer Graphics, 21(4):205­214, July 1987. Proceedings of SIGGRAPH'87 (Anaheim, California).
+
+[TPF89] Demetri Terzopoulos, John Platt, and Kurt Fleisher. Heating and melting deformable models (from goop to glop). In Graphics Interface'89, pages 219­226, London, Ontario, June 1989.
+
+[TW88]
+
+Demetri Terzopoulos and Andrew Witkin. Physically based model with rigid and deformable components. IEEE Computer Graphics and Applications, pages 41­51, December 1988.
+
+[WW90] Andrew Witkin and William Welch. Fast animation and control for non-rigid structures. Computer Graphics, 24(4):243­252, August 1990. Proceedings of SIGGRAPH'90 (Dallas, Texas, August 1990).
+
+[ZT91] O.C. Zienkiewicz and R.L. Taylor. The Finite Element Method. McGraw-Hill, 1991.
+
+

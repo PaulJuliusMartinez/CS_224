@@ -1,0 +1,1285 @@
+June 8, 1998
+
+PipeRench Manual
+Matthew Myers, Kevin Jaget, Srihari Cadambi, Jeffrey Weener, Matthew Moe, Herman Schmit, Seth Copen Goldstein, Dan Bowersox Carnegie Mellon University
+An overview of the PipeRench architecture, assembler, and simulator
+Section 1.0: Introduction Section 2.0: Parameterized Architecture Section 3.0: PipeRench Architecture Section 4.0: Programming PipeRench Section 5.0: The CHASM Assembly Language Section 6.0: The Assembler and Simulator Section 7.0: Conclusion Section 8.0: References
+
+1 2 9 18 20 36 41 41
+
+1.0 Introduction
+PipeRench (also known as Cached Virtual Hardware or CVH) is a run-time reconfigurable Field-Programmable Gate Array (FPGA) which manages a "virtual" pipeline. The fabric of the FPGA contains physical pipeline stages which, though limited in number, can be reconfigured separately at run-time to perform numerous calculations in an application. In this way, the physical pipeline stages, or "stripes," are configured and arranged to form the virtual pipeline which executes the desired task. The logical size of a virtual pipeline is unbounded, and it can run on a compatible architecture of any size. Such hardware virtualization provides the benefits of forward-compatibility and more robust compilation.
+This document describes the architectural design for the PipeRench chip. Architectures both general and specific are discussed. Also outlined are an assembler and a simulator for PipeRench that we have implemented for the UNIX operating system. These software tools allow the convenient testing of various PipeRench applications in the absence of the actual hardware. The syntax for the Cached Virtual Hardware Assembly language is detailed here, as are planned improvements to the architecture, the assembler, and the simulator.
+
+PipeRench Manual
+
+1 of 41
+
+FIGURE 1.
+
+Parameterized Architecture
+
+2.0 Parameterized Architecture
+In this section we explore the general Cached Virtual Hardware architecture. Features such as global busses, pass registers, and interconnect will be introduced. This model will provide the foundation for a more detailed description of the PipeRench architecture in the next section.
+The structure of PipeRench is based on a new pipeline reconfigurable FPGA architecture called "striped FPGA." The main advantage of a striped FPGA over other FPGA alternatives is its high resolution of reconfigurability (see [1]). In a pipeline reconfigurable architecture, individual pipeline stages ("stripes") can be reconfigured at runtime to perform numerous tasks over the course of one application. A standard FPGA, on the other hand, must be reconfigured in its entirety; a given piece of such hardware can only perform one task per application. On-the-fly reconfiguration means that an application running on PipeRench is not limited by the number of physical stripes in the FPGA fabric, but instead runs on the virtual hardware created from these reconfigured stripes.
+Generalized Pipeline Reconfigurable FPGA
+
+Comb. Logic
+
+Stripe n
+
+Global Bus
+
+Comb. Logic
+
+Stripe n +1
+
+2 of 41
+
+PipeRench Manual
+
+FIGURE 2.
+
+Global Bus
+
+Parameterized Architecture
+
+Two stripes of an extremely general pipeline reconfigurable architecture are shown in Figure 1. In this architecture, the combinational logic in any stripe is a function of the global I/O, the registered outputs of the previous stripe and the registered outputs of the current stripe. There must be global I/Os because, as discussed in [2], the pipeline stages in an application can be physically placed in any of the stripes of the fabric, therefore inputs to and outputs from the application must use a global bus to get to their destination. Connections between stripes must be registered, because on the first cycle that stripe n operates on data, stripe n + 1 may be being configured or may be working on another part of the pipeline. The register assures that values do not outrun the configuration. Conversely, values cannot go to previous stripes, because those stripes may have been reconfigured to operate on another stage of the pipelined application.
+The underlying assumption for our area model is that the building blocks for combinational logic are look-up tables (LUTs). Therefore, the combinational logic block in Figure 1 can be replaced by an interconnection network and a set of N LUTs, each of which has D inputs. This yields the architecture in Figure 2. Inputs to the interconnection network include the global bus, the registers from the previous stripe, as well as the registered and un-registered outputs from the LUTs. Unregistered outputs are distributed so that LUTs can be chained together to build complex combinational functions within one stripe.
+LUT-Based FPGA
+
+Interconnect Network
+
+DD
+
+D
+
+D-LUT #1
+
+D-LUT
+
+D-LUT
+
+#2 ... #N
+
+Stripe n Stripe n+1
+
+Interconnect Network
+
+PipeRench Manual
+
+3of 41
+
+FIGURE 3.
+
+Parameterized Architecture
+
+This architecture is targeted at implementing data paths for digital signal processing and other word-based computations. In word-based computations, the logic found in LUTs is frequently duplicated across every bit of the word. In order to conserve configuration bits, we would like to investigate the benefit of grouping multiple LUTs into logic blocks, as in [3]. Figure 3 shows the architecture of our logic block, which includes B LUTs with D inputs each. As in [3], we have included two types of inputs to a logic block: Dd data inputs which are B bits wide and are wired straight to the B LUTs, and Dc control inputs which propagate to one input of each LUT. These control inputs are useful for masks and multiplexor select lines.
+
+B-output LUTs
+
+Dd Inputs (=2)
+
+{
+
+1 1 Dc Inputs (=1)
+
+...LUT LUT
+
+LUT
+
+1
+
+B Outputs
+
+2.1 Pass registers
+A shortcoming of the architecture depicted in Figure 2 is that a LUT is associated with a single register. Our initial experience with mapping applications to such an architecture has shown that a high number of registers are required to pass values from the register in one stripe directly down to the corresponding register in the next stripe. In the architecture in Figure 2, the only way to do this is to configure the logic block to pass one input, which wastes the logic block's computational power. Furthermore, the interconnect network is under-utilized since it is only asked to pass a value from a logic block in one column to the logic block in the next stripe and the same column. There is no facility for local register-to-register interconnection.
+In order to provide for this type of interconnect, we have transformed each register in Figure 2 into a pass register file, with P different B-bit wide registers. In a pass register file, which is depicted in Figure 4, the logic block can write to one of the P registers. The remaining registers are written with the value in the corresponding register in the previous stripe. There may be multiple read ports on the register file, which can be connected to one of the logic block inputs or to the interconnect network. The connection of pass register read ports to logic blocks and interconnect will be discussed later.
+
+4 of 41
+
+PipeRench Manual
+
+Parameterized Architecture
+
+FIGURE 4.
+
+Pass Register File
+
+Logic Block
+B
+Read Port
+Stripe n Stripe n+1
+Logic Block
+
+B
+1
+
+Write Port
+
+B
+...
+2P Pass Register File
+...
+
+2.2 Global Busses
+Figure 2 depicts one global bus feeding into the generalized interconnect of the stripe. This would, in principle, allow any part of the global bus to route through the interconnect network to any logic cell. Though useful, this would be a very expensive feature to implement, especially for the large amount of data that needs to be carried on the global busses. Keep in mind that global busses are the only way for operands to get into the FPGA, and for results to get out of the FPGA. In addition, as discussed in [2], global busses are necessary to save and restore state from stripes when they are removed from and later restored to the fabric during hardware virtualization.
+We have therefore decided to have the global bus bypass the general interconnect network and connect directly to the logic blocks. A set of G busses are associated with each column of logic cells. These busses, which are each B bits wide, span all the stripes in the FPGA, but only directly connect to the logic blocks underneath them. Each logic block has one write port and multiple read ports on these busses. The enable signals for writing global busses are generated globally in order to prevent multiple stripes from driving the same bus, much as in [5]. Because these enables are generated globally, there is no need to locally store configuration bits to determine which bus to drive.
+
+PipeRench Manual
+
+5of 41
+
+FIGURE 5. 6 of 41
+
+Parameterized Architecture
+
+2.3 Interconnect Network
+The interconnect network, which is responsible for moving values between cells in a single stripe, will play a very substantial role in the size and routability of an architectural implementation. Obviously, having complete interconnect between all logic blocks and pass registers is infeasible for wide stripes. We can reduce the size of the interconnect network
+· by reducing the number of inputs to the network from each logic block, (Figure 2 shows registers and combinational logic connecting to the interconnect network);
+· by reducing the connectivity inside the network (e.g. not having a complete crossbar); and
+· by reducing the number and functionality of the output ports from the network (which are the inputs to the logic block).
+It is rare that both the combinational value from the logic block and a value from the corresponding pass register file need to simultaneously use the interconnect network to move laterally within the stripe. As shown in Figure 5, one input port of the interconnect network is multiplexed between the read port of the pass register file and the combinational output of the logic block. The other input port to the interconnect network is connected to a read port of the pass register file in the previous stripe.
+
+Parameterized Cell Architecture
+Pass Reg File Stripe n Stripe n+1
+Horizontal Interconnect Network G Busses
+B
+
+Control
+
+Dg=1 Dp=1
+
+Dc
+
+Logic Block D Inputs
+
+P*B
+
+Pass Reg File
+
+PipeRench Manual
+
+Parameterized Architecture
+We are currently considering which network architecture we will use for the horizontal interconnect network. The prototype chip that we have designed has a complete crossbar between every input port and every output port. (The CVH assembler and simulator described in Section 6.0 currently support a full crossbar as well.) The logic block inputs can access not only any of the values sent from the N cells in the stripe, but a sliding window of bits within the N*B bits on the crossbar. This allows our architecture to do data alignments that are necessary for word-based arithmetic. This innovation was originally described in [3]. We realize that this complete crossbar architecture is not scalable, and we are therefore investigating and parameterizing other network architectures.
+Our architecture assumes that each of the Dd data inputs to the logic block has a dedicated connection to the network. We assume that a subset of these inputs, with cardinality Dg, also has access to one of the global busses. The remaining Dp inputs to logic block can access a dedicated read port of the pass register file. No input can access both the global busses and the pass registers. Figure 5 shows an example where Dp = 1 and Dg = 1. We have replaced the parameter Dd with two parameters new parameters, Dp and Dg, such that Dd = Dg + Dp.
+Figure 5 provides an overview of our parameterized architecture. In summary, there are seven parameters:
+· N: the number of logic blocks in the stripe; · B: the width, in bits of the logic block; · G: the number of B-bit wide global busses visible to each cell; · P: the number of B-bit wide registers in the pass register file; · Dg: the number of logic block inputs that can connect to the horizontal interconnect
+network or the global busses; · Dp: the number of logic block inputs that can connect to the horizontal interconnect
+network and the pass registers of the previous stripe; and · Dc: the number of control inputs to the LUT.
+The logic block therefore contains B LUTs, each of which has D = Dp + Dg + Dc inputs.
+
+PipeRench Manual
+
+7of 41
+
+Parameterized Architecture
+
+8 of 41
+
+PipeRench Manual
+
+PipeRench Architecture
+
+3.0 PipeRench Architecture
+The architecture that can currently be targeted by the Cached Virtual Hardware Assembler is a restricted class of the architectures described in the previous section. This section details the architecture in a top-down manner, first discussing the stripe and then the processing elements (PEs) that are contained in the stripe. The discussion then moves to the routing and configuration of PEs, and finally to the memory controllers which handles flow of data between the FPGA fabric and the memory.
+3.1 The Stripe
+In a hierarchical sense, the stripe is the largest, most general block of PipeRench. Each stripe performs a computationally significant portion of the application and is analogous to a pipeline stage. Registers between stripes separate each stripe from the rest of the architecture, providing the pipeline capability. Figure 6 shows two stripes along with the local bus which connects each stripe to its successor. Each stripe is made up of N computational logic blocks, or Processing Elements (PEs). PEs are described in detail in Section 3.2.
+
+.... .... .... ....
+
+FIGURE 6.
+
+Architecture of PipeRench at Stripe Level
+
+Stripe n Stripe n+1
+
+PE N-1
+
+PE N-2 . . . . PE 1
+
+PE 0
+
+PE PE . . . . PE All lines are B bits wide except for control lines
+
+PE
+
+N busses Dc control bits
+N busses
+
+PipeRench Manual
+
+9of 41
+
+10 of 41
+
+PipeRench Architecture
+
+3.2 The Processing Element
+All computation for a PipeRench application is done in the processing elements. Each PE in a stripe can take its inputs from several different locations, and output to various other locations within the fabric. More details follow on the features of a processing element.
+
+3.2.1
+
+Inputs
+A PE takes two B-bit inputs from the local bus, the global bus, or the registered output of the previous stripe. These inputs, A and B, are the values to be operated on within the PE. Operand A can read a value from the local bus, or it can read a value from the global bus. Operand B can read a value from the local bus, or it can read a value directly from the register file of the same PE in the previous stripe.
+
+Other inputs to the PE come from an adjacent PE in the same stripe. These 1-bit values are named Cin (carry-in), Zin (zero in), and Xin (general purpose), and can be chosen from the three inputs to the "Misc. Routing" block, although a limited number of combinations are allowed. One might choose to define Xin to equal the Cout from the previous PE, for example, in order to perform some logical function on that value.
+
+Figure 7 shows in detail where the particular inputs come into the PE.
+
+3.2.2
+
+Outputs
+The B-bit functional output of the PE can be saved into the register file and passed on to the next stripe. In this case, the value can be fed directly to the B input of the corresponding PE in the next stripe. The PE output can also be routed, registered or unregistered, to the local bus, as shown in Figure 7. This value can be picked up from the local bus by another PE in the same stripe.
+
+1-bit outputs Cout (carry-out), Zout (zero out), and Xout (general purpose) are routed through the "Misc. Routing" block to the neighboring PE on the left. Cout is the carryout value from the top bit of the carry chain (see Section 3.2.5). Zout has a value of 0 if the PE output is zero, and 1 otherwise. The Xout of a PE is hardwired to the Xin of the same PE; this allows the PE to pass a value from the previous PE to the next PE.
+
+3.2.3
+
+Barrel Shifter Connecting inputs from the local busses to the PE are barrel shifters for each operand, as seen in Figure 7. Currently, the barrel shifters can only shift left or rotate left, although a shift or rotate right can be accomplished through a combination of the routing resources.
+
+The barrel shifter can take as its input any B-bit window from the total value available to it (B*N bits wide, spanning all N of the local busses). For example, in an architecture with N=4 and B=4, imagine that the following 16 bit value was placed on the four local busses:
+101110[0101]101011
+
+Any four-bit window on this value can be grabbed by the barrel shifter, and then that value can be shifted or rotated left by any amount. In this case, the value 0101 was grabbed, so if it was shifted left by 2, the resulting input to the PE would be 0100. If it
+
+PipeRench Manual
+
+PipeRench Architecture
+was rotated left by three, we would get 1010 as the PE's input. This flexibility allows a great number of possibilities for manipulating data.
+
+FIGURE 7.
+
+Processing Element Routing
+
+.... .... .... ....
+
+Global
+
+Barrel Shift 1 A
+
+Barrel Shift 2
+
+Prev. Reg File
+
+B
+
+PE Output
+
+Xout, Zout, Cout R0
+
+Stripe n Stripe n+1
+
+0 1
+x N
+Global
+
+from Rfile
+Barrel Shift 1
+
+A R0
+
+PE Output
+
+Xout, Zout, Cout
+
+PE.x
+
+Xin, Zin, Cin
+
+Barrel Shift 2
+
+Prev. Reg File
+
+B
+
+PE.x
+
+Xin, Zin, Cin
+
+PipeRench Manual
+
+All lines are B bits wide except for control lines
+
+11of 41
+
+PipeRench Architecture
+
+FIGURE 8.
+
+Processing Element Architecture (x is PE number, y is a global bus number, i a register)
+
+G
+
+Global "global.y"
+
+Barrel Shift
+
+Barrel Shift
+
+N busses B bits wide
+
+"prev.x.Ri"
+
+"(x-1).Xout"
+
+"x.A"
+
+A
+
+B "x.B"
+
+"x.Xout"
+
+3-LUT "pe.x"
+B-1
+
+3-LUT "pe.x"
+B-2
+
+3-LUT "pe.x"
+1
+
+3-LUT "pe.x"
+0
+
+"x.Xin"
+
+Misc. Routing "(x-1).Cout"
+
+"x.Cout"
+
+Fig. 9
+
+Ripple Fig. 9
+
+"x.Zout"
+
+Zero?
+
+B
+
+"x.Out" PE Out to current
+stripe local bus
+
+Carry Chain
+
+Fig. 9
+
+Fig. 9
+
+from previous stripe register file
+
+"x.Cin" "x.Zin"
+
+R0 R1
+
+RP-1
+
+"(x-1).Zout"
+
+"x.R0" to current stripe
+local bus
+
+R0 from next stripe
+
+PE Out from next
+stripe
+
+0 1
+x N
+
+.... ....
+
+next stripe local bus
+
+"this.x.Ri" to next stripe B input
+
+to next stripe register file
+
+12 of 41
+
+PipeRench Manual
+
+PipeRench Architecture
+
+3.2.4
+
+Look-Up Table (LUT)
+There are B 3-input look-up tables provided in each PE, as seen in Figure 8. The inputs to the LUTs are A, B, and Xin. Inputs A and B will vary among the B LUTs depending on these inputs' individual bit values, but Xin will have the same value for every LUT in the PE. Each LUT can provide any function of its three inputs; however, all of the LUTs in a given PE perform the same function of A, B, and Xin.
+
+3.2.5
+
+Ripple-Carry Chain
+The ripple-carry chain is intended to be used whenever a PE is performing an addition or subtraction. When the LUT output is combined with its inputs, the ripple-carry chain can output the sum (or difference) of the two B-bit inputs, A and B. The most significant carry-out result can be passed on to the next PE through Cout, so that addition and subtraction of values greater than B bits is supported. Figure 9 shows the actual contents of one bit of the ripple-carry logic. This logic exists underneath each LUT pictured in Figure 8. The "carry_enable" bit chooses whether the carry chain should pass along only the LUT output or whether it should compute the LUT output XOR'ed with the
+carry in from the previous PE. In this way, a function such as A  B  Cin can be expressed by the PE.
+
+FIGURE 9.
+
+Carry Chain Cell LUT output A B
+
+01
+
+Cout to next carry cell (or next PE)
+
+0 1
+
+shift_input
+Cin from previous carry cell (or previous PE) carry_enable
+
+PE output
+An additional function of the carry chain is realized by activating the "shift_input" bit. It can select which input, A or B, should be shifted through the carry chain as a carry-in for the next carry chain cell.
+
+PipeRench Manual
+
+13of 41
+
+14 of 41
+
+PipeRench Architecture
+
+3.2.6
+
+Pass Registers (Register File)
+Associated with each processing element is a register file. This register file can be used to hold intermediate values of a computation which need to be passed to subsequent stages in the pipeline. By using these registers, one can avoid wasting an entire processing element to simply pass values unchanged between stripes.
+
+On each clock cycle, the contents of a PE's register file are automatically passed to the register file in the corresponding PE in the next stripe. In addition, the contents of a register from the file can be used and modified by the logic in a stripe. The output of a PE can be written to any register in its register file, but a register file can not be written to by any other PE except its own. A register's output can routed to the A or B input of any PE in the next stripe, and Register 0 can be routed to the input of any PE in the current stripe. Register 0 is the special register for save/restore (described in Section 3.2.7).
+
+Each PE's register file has two read ports and one write port. Therefore, a register file can be read by multiple PEs, as long as each PE requires data from the same register. This is because one read port goes directly to the next stripe while the other read port can be fed back into the horizontal interconnect network from which the current stripe takes its inputs.
+
+Since the number of registers that will be present in the final version of PipeRench has not been determined, the assembler and simulator support an arbitrary number of registers per processing element.
+
+3.2.7
+
+State Storage and Restoration
+In order to maintain a current value in a given stripe, one register of a PE can be stored into memory after the stripe has executed, and it can be restored the next time the stripe is loaded into the fabric. This operation will be necessary if a pipeline stage needs to store some "state" in a register and there is a likelihood that the stripe will be swapped out of the fabric. When the stripe is swapped back into the fabric, the register will be restored along with the stripe to allow execution to continue normally.
+
+Currently, Register 0 is designated as the store/restore register, so only this register will be saved in a store operation, and only this register will be restored. In order to support the store/restore feature, two global busses must be dedicated to the swapping operation. The actual interface with the memory controllers is explained in Section 3.5.
+
+3.3 Stripe Routing and Limitations
+The local routing within a stripe is extremely flexible to allow dataflow to the necessary cells, whether they are in the same stripe or in the next stripe. However, there are some constraints to the amount of routing that can be performed. The following is a partial list of some interesting routing "quirks":
+· Outputs of a PE can be routed to the stripe's local bus, which can be read by any other PE in the stripe. Each one of the N local busses must share among the output of the current PE, Register 0 from the current PE, or a registered output from the previous PE. This imposes several routing limitations, for example, not allowing Register 0 and the output of a given PE to both be accessed in a single stripe. Most of these
+
+PipeRench Manual
+
+PipeRench Architecture
+
+FIGURE 10.
+
+limitations can be superseded by using an extra stripe or an extra PE to perform the given function. · Only operand A can read from the global bus, and only operand B can read from the extra register file port from the previous stripe. However, any of the registers in the same PE in the previous stripe can be accessed through the local bus if the register is driven on the local bus. · Each PE can read from one of G global busses, each having N*B bits. However, a PE can only read the B bits that correspond to its position in the stripe. For example, the rightmost PE ("PE 0") can only access the least significant B bits of any global bus. · The "Misc. Routing" box in Figure 8 is a partial crossbar which allows Cin, Xin, and Zin to grab almost any combination of Cout, Xout, and Zout from the neighboring PE. However, not all combinations are supported. · The "carry_enable" and "shift_input" signals are hard-coded logic and can only be turned on and off.
+3.4 Configuration Controller
+The control word is the main unit of configuration for the PipeRench architecture. This word determines how the stripe is configured, which global busses the stripe will access, and where the next control word is located. More significantly, it also determines the number of execution cycles when applications are virtualized.
+The fabric knows when each stripe reads/writes on a global bus based on the control word. A stripe gets exclusive access to a bus by asserting a bus_enable signal and reads from a bus by asserting a bus_use signal in the control word.
+Figure 10 shows how the control word is broken up.
+
+Control Word Format
+20 bits
+
+1
+
+4 bits to indicate which global bus this virtual stripe can read from.
+PipeRench Manual
+
+next address (8 bits)
+4 bits to indicate which global bus(es) this virtual stripe needs to write to.
+
+needs to be a `1' for the last virtual stripe in the config set
+15of 41
+
+16 of 41
+
+PipeRench Architecture
+3.5 Memory Controllers Currently, the memory architecture is only defined for the interface between the global busses and the memory. Each global bus has its own memory controller, which accesses the memory and supplies data to the global bus, or accepts data off the global bus and writes it to memory. Each memory controller keeps track of a current index to memory, and increments it after it transfers each piece of data to or from the memory.
+The design for the memory controllers was based on an analysis of the memory access patterns of data flow though the reconfigurable fabric. The majority of PipeRench applications, such as FIR and multiplication, are single pipelined. This means that data flows through the fabric starting at the first stripe and ending with the last stripe. Two memory controllers, one for data supplied to the first stripe and one for data output from the last stripe, are used to facilitate this common data flow pattern.
+In several other applications, the data flow is not single pipelined. In this case, the state of a stripe must be stored in memory, then retrieved for later use. (Section 3.2.7 covers state storage and restoration.) Sometimes only a store or a restore operation is needed, but not both, so that type of access is also permitted. Store and/or restore of a register is accomplished by asserting either the store bit or the restore bit in the configuration word. The store or restore data is then driven over global bus 0 or 1, respectively. (These two busses can be used for other access types if store and restore are not needed.)
+Each of the memory controllers must be programmed with its desired access pattern. (For simulation purposes, this is accomplished with the memconfig.data file ­ refer to Section 6.3.2 for details.) Five parameters are needed to describe each of the controllers:
+· Access type -- The first number describes which access type is desired, from those described above: 0. unused 1. Last stripe output 2. First stripe input 3. unused 4. unused 5. Store - bus 0 only 6. Store and restore - bus 1 only 7. Restore - bus 1 only (under construction) 8. unused
+· Initial index -- The second number represents the very first address to be used by memory.
+· Stride value -- The third number is the absolute value of the memory access stride. · Period -- The fourth number is the period of memory access. The period indicates
+how many stripe states must be stored or restored per iteration through the virtual stripes. · Stride direction -- The fifth and final number has a value of either 1 or 0 and dictates whether the stride is positive or negative, respectively.
+PipeRench Manual
+
+PipeRench Architecture
+
+PipeRench Manual
+
+17of 41
+
+18 of 41
+
+Programming PipeRench
+
+4.0 Programming PipeRench
+In designing a PipeRench application, one must consider the logic and routing resources available, and decide how they can be used most efficiently to carry out the procedures required to complete the task. For example, if we want to design a simple pipeline to multiply a B-bit variable input (call it J) by a constant number (say, 13), we have to realize that there is no arbitrary multiply function which is native to the processing elements.
+The tools available to us are 3-bit boolean functions (via the LUTs), carry logic (in the ripple-carry chain), and multiplication by 2 (using the barrel shifters). Combining the LUTs with the carry chain allows construction of a ripple adder without much difficulty. Incorporating the shifters allows partial product calculation using only powers of 2 for multiplication:
+(8*J) + (4*J) + (1*J) = (13*J)
+Assuming B=4, the product 13*J can require up to 8 bits to represent in binary, so we now know that we must add three 8-bit binary numbers. However, each PE can only input two 4-bit values (assuming we don't use the 1-bit Xin as an operand). That presents two obstacles:
+· How do we add two 8-bit numbers? · How can we add together 3 of them?
+The solutions:
+· Using the carry-out from PE x and the carry-in from PE x+1, we link together two PEs to form an 8-bit ripple adder as described in Section 3.2.5.
+· We use this 8-bit adder to add up the first 2 partial products and register the result. Then, in the next stripe, we can add the third number to find the final output.
+Here is the code which implements our multiply-by-13 function. We bring in the J input from Global Bus 0 and output the result to Global Bus 1. Since CHASM is fairly straightforward, it should be evident what each line of code contributes to the configuration of the fabric. Details on the CHASM syntax are provided in the next section.
+
+// Multiply-by-13
+stripe First; 0.A = Global.0; 0.Cin = @0; pe.0 = A; pe.1 = 0; 2.A = 0.Out << 2;
+
+// Here we define the function of // each PE in the first stripe // Load J from the global bus
+// Pass A thru to the PE's output // PE 1 will hold the top 4 bits // of this 8-bit value // Bring in J from the output of // PE 0, and shift left 2 places
+PipeRench Manual
+
+Programming PipeRench
+
+pe.2 = A;
+3.A = 1.Out <<< 2; pe.3 = A;
+
+// (multiply by 4 in binary) // PE 3 holds the top 4 bits of J*4 // The left rotate (<<<) grabs // bits which were shifted off PE 2
+
+load R0; end stripe;
+
+// Place all outputs into registers
+
+stripe Next;
+
+// Here's the next stripe definition
+
+0.A = prev.0.R0; 0.B = prev.2.R0;
+
+// Input J (from PE 0 of last stripe) // and 4*J (from PE 2)
+
+1.A = prev.1.R0; 1.B = prev.3.R0;
+
+// Same thing here with the // top 4 bits
+
+pe.{1..0} = A + B; // This line sets up an 8-bit
+
+// addition, (4*J)+(1*J)
+
+2.A = prev.2.R0 << 1; // Shift 4*J left one place
+
+pe.2 = A;
+
+// Output will be 8*J
+
+3.A = prev.3.R0 <<< 1; // Grab the top bit, which
+
+pe.3 = A;
+
+// was shifted off PE 2
+
+load R0; end stripe;
+
+stripe Last;
+
+0.A = prev.0.R0; 0.B = prev.2.R0;
+
+// Input 5*J // and 8*J
+
+1.A = prev.1.R0; 1.B = prev.3.R0;
+
+pe.{1..0} = A + B; // (8*J)+(5*J)=(13*J) -- 8 bits
+
+pe.2 = 0;
+
+pe.3 = 0;
+
+Global.1 = {1..0}.R0; // Send the result out on global 1
+
+load R0;
+
+end stripe;
+
+PipeRench Manual
+
+19of 41
+
+The CHASM Assembly Language
+5.0 The CHASM Assembly Language
+Cached Virtual Hardware Assembly (CHASM) is the language used to control the PipeRench architecture described in the previous section. At the lowest level, CHASM can be thought of as a placed and routed netlist for a PipeRench application. But because various aspects of the PipeRench architecture are currently being optimized, the assembly language allows the specification of numerous architectural parameters. In effect, CHASM makes it possible to express applications for a class of PipeRench architectures based on the architecture previously outlined.
+A piece CHASM code consists of instructions to PipeRench detailing the task that each stripe within the fabric must accomplish. Each individual processing element within each stripe is told which inputs to choose, what output its LUTs are to produce, what function its carry chain should perform, and which values its register should hold. These instructions are then translated by the assembler into configuration bits, which are sent to the PipeRench fabric to configure each stripe and PE.
+This section will introduce the reader to the syntax of the CHASM code. Procedures for running the assembler can be found in Section 6.2.
+5.1 General Syntax Comments
+PipeRench assembly language is a block-structured language, currently supporting two levels of scope. There are two types of blocks the assembler recognizes: stripe descriptions and function definitions. There are also several statements which can be used outside blocks which have file scope.
+PipeRench assembly language is case insensitive. It also ignores whitespace, indenting, and carriage returns. Comments are C++ style: // begins a comment, which extends to the end of the line. Legal identifiers begin with a letter, and have zero or more additional alpha-numeric characters.
+5.2 Reserved Words
+The following tables present a list of keywords and a list of signal names recognized by the assembler. User-defined variables may not take on these reserved names. Of special note is the fact that any identifier consisting of an R followed by a number of digits (R<digits> in the list of keywords below) is used to represent a pass register.
+All reserved words within this document are in boldface type. By convention, the first letters of signal names are capitalized within this document, although Zout and zout are really equivalent since the CHASM language is not case sensitive.
+
+20 of 41
+
+PipeRench Manual
+
+The CHASM Assembly Language
+
+TABLE 1.
+
+Assembler Keywords
+
+carry_enable define end function global goto high
+
+if load low max_width msb pe prev
+
+restore save shift_input stripe this use width
+
+TABLE 2.
+
+Signal Names
+
+A B Cin Cout
+
+Coutbar Out R<digits> Xin
+
+Xout Zin Zout
+
+5.3 Assembler File Overview
+A PipeRench assembler file consists of blocks which describe the configuration of stripes, blocks which define what function a PE performs, statements which control architectural parameters, and statements which assign symbolic names to ranges of PEs. A stripe description block (see Section 5.5) defines the inputs and interconnections in a stripe, as well as the functionality of the logic in a stripe. A function definition block (see Section 5.10) is used to define a function which can be computed by a PE. The default and maximum width of a PE can be changed (see Section 5.5). Finally, using the define keyword (see Section 5.4.2), a user can describe a range of processing elements using a symbolic name.
+
+5.4 Range Expressions
+
+One of the major features of CHASM is the ability to perform actions on multiple objects using one command. The syntax which permits this is called a range expression. The range expression contains a group of numbers, which can represent a group of PEs, registers, or signal lines.
+
+5.4.1
+
+Simple Range Expressions
+Simple range expressions are the most commonly used range expressions. An expression can be a single number, a pair of numbers separated by ".." to specify a range of values, or a comma-delimited list containing any combination of numbers or simple ranges. A range expression must be enclosed in curly braces ("{}") if the range is made
+
+PipeRench Manual
+
+21of 41
+
+22 of 41
+
+The CHASM Assembly Language
+
+up of a list of values. The braces are optional (but never illegal) otherwise. When dealing with ranges, note that the least significant PE in a stripe is PE 0. The following are all legal range expressions:
+
+3 // The set (3)
+
+{3,4}
+
+// The set (3,4)
+
+{3..5,7} // The set (3,4,5,7)
+
+{2,4..6,8} // The set (2, 4, 5, 6, 8)
+
+For sideways input to PEs (Xin, Cin, and Zin) the numeral -1 is also valid. This is used to represent the inputs to the least significant PE. In all stripes, for example, the carry-in of a PE can be connected to the carry-out of the previous PE. The assembler will let you connect the carry-in of PE 0 to the (non-existent) carry-out of PE -1. In the physical hardware, this connection is hard-wired, but allowing this syntax makes setting up a carry chain simple: {3..0}.Cin = {2..-1}.Cout will put together a 4-PE carry chain. -1.Zin is defined to be 1, while -1.Cin and -1.Xin are both defined to be 0.
+
+The order in which elements of a range are defined is significant. The members of the range are listed in most- to least-significant order. When operations using ranges take place, the assembler first does the operation on the least significant member of the range, then the second least significant member, and so on. For many operations, this doesn't matter. However, when assigning two ranges of signals together, it is important that the two ranges correspond to one other.
+
+5.4.2 "Define" Keyword Ranges of PE's can be assigned to symbolic names. This is accomplished by using the keyword define. A definition has the following syntax:
+define <symbolic name> = <range>;
+
+where symbolic name is a valid identifier, and range is a range of numbers as described in the previous section. The symbolic name can then be used in place of a range at any location in the current stripe description after the definition itself appears. The symbolic name is only in scope within the block in which it was defined. If define is used outside of a block, the definition is valid from the point at which the keyword is defined until the end of the file.
+
+5.4.3 Using Parts of Ranges The final way of specifying a range is to use only a part of a range expression. In general, the syntax for this will be
+<variable name> : <range expression>
+
+where variable name is a variable previously defined to be a range, and range expression is a simple, legal range. This operation will take a number of the values from the variable name based on the elements of the range expression. This is best illustrated by an example:
+define foo = {7..4}; load foo:{3..2}.R0; // Same as load {7,6}.R0;
+
+PipeRench Manual
+
+The CHASM Assembly Language
+
+The range in the second statement means that the 3rd and 2nd element of foo, the PEs 7 and 6, are the registers to be loaded. Remember that for ranges, numbering starts from the 0th element: foo:0 would be the 4th PE in a stripe. Obviously, attempting to select an element which doesn't exist (foo:8, for instance) is illegal.
+
+There are several special modifiers which can be used in the simple range expression. The first, msb, represents the most significant element in a range. This isn't the always the largest element in a range, it is just the left-most element in the list of range elements. Msb can be used in a range expression in place of any number. Therefore, using the value for foo defined above, foo:msb is PE 7, and foo:msb..1 is PEs 7,6, and 5.
+
+Optionally, a constant value can be subtracted from msb when taking a part of a range. For example, foo:msb-1..0 will get all except the most significant element of the range foo (PEs 6, 5, and 4).
+
+The symbol ~ can prefix any single element (including msb). This specifies that all but the element specified will be selected from the range. Thus, foo:~msb will get every element except the most significant element of range foo (again, PEs 6, 5, and 4). foo:~0 will get all but the least significant element of the range foo (PEs 7, 6, and 5). You can not use an expression like foo:~msb..0, since the expression ~msb represents a whole range of numbers by itself.
+
+A special range element, -1, can be used in these expressions as well. In this case, it represents a value which is one less than the least significant element in the range.
+
+These modifiers are useful for defining operations on ranges which may change in size as an application is being written and tested. For example, the following two lines will set up a carry chain regardless of the size of the range foo.
+foo:~0.Cin = foo:~msb.Cout; foo:0.Cin = @0;
+
+5.4.4
+
+Empty Range Expressions
+In many cases, it is possible to leave a range expression out of a statement entirely. In this case, the assembler will perform the command on every object that it can. The assembler will pre-process the input file and determine the size of various objects in the design in order to intelligently determine what ranges to use if none are specified. For example, look at the following piece of code.
+
+pe = A + B; load 4..0.R0;
+
+The first line specifies that all of the PEs in the current stripe will be adders. The second line says to store the result in register 0 of the current stripe. We are ignoring the fact that the A and B inputs are not connected to anything at this point. Since the load statement implies that the stripe is 5 PEs wide, the first statement will set PEs 0 through 4 to be adders.
+
+There are actually two forms of the syntax when using no explicit range in an expression:
+
+PipeRench Manual
+
+23of 41
+
+24 of 41
+
+The CHASM Assembly Language
+
+pe = A + B; pe. = A + B;
+
+They both produce identical results.
+
+5.4.5
+
+Large Range Expressions
+The methods in the previous sections can be combined into a list separated by commas to generate arbitrarily long lists of PEs. This list can be enclosed in parenthesis to make things more readable. This can lead to some pretty bizarre looking expressions. For example, the expression
+
+(foo:{3,1..0}, {1,2..5,0}, 8..6)
+
+would be legal. Assuming foo were defined to be {8..1}, the numbers in this range would be {4, 2, 1, 1, 2, 3, 4, 5, 0, 8, 7, 6}. One shouldn't try to use an expression this complex in every program, but the syntax is powerful enough to handle just about everything.
+
+5.5 Setting Processing Element Width
+The assembler allows the user to set the bit-width (B) of each processing element in a stripe. This can be done in two ways. If the width expression is used outside a stripe, it sets the default bit-width for PEs in every stripe. Used inside a stripe, the command sets the bit width for PEs in that stripe only. The statement used for this task is
+width.<range expression> = <integer>;
+Range expression describes the range of processing elements that the width statement affects, as described in detail in Section 5.4. PEs which have no user defined default width are assumed to be 4 bits wide.
+
+5.6 Stripe Description Block
+In PipeRench assembly language, the stripe description defines all the functionality of a stripe: the functions implemented by the PE's and both inter- and intra-stripe routing. A stripe description block looks like this:
+[<label :>] stripe [<name>]; <stripe statements> end stripe;
+A stripe description includes an optional label, the keyword stripe, an optional stripe name, and then a semicolon. It then has a list of statements which describe the operation of the stripe. The block ends with the keywords end stripe followed by a semicolon. Statements included within a stripe description block can
+· describe PE functionality (see Section 5.7) · make connections between two signals (see Section 5.8) · indicate that the stripe is to be saved or restored (see Section 5.9) · assign a symbolic name to a range of processing elements (see Section 5.4.2)
+
+PipeRench Manual
+
+The CHASM Assembly Language
+
+· set the bit-width (B) of PEs within the stripe (see Section 5.5)
+
+An example stripe is shown below. Each processing element in the stripe will add the A and B inputs. The A input comes from the register file of the previous stripe, as does the B input. By default, the output of each processing element is stored in R0 of that PE.
+
+stripe example;
+
+pe = A + B;
+
+// The processing element will add A and B
+
+A = prev.R0; // The inputs are taken from registers 0
+
+B = prev.R1; // and 1 in the previous stripe.
+
+load R0; // Put the result of the add into R0
+
+end stripe;
+
+A named stripe can be re-used multiple times without specifying the entire stripe again. This is accomplished by using the following syntax:
+use stripe <stripe name>;
+
+Stripe name is the name associated with a previously defined stripe description block. Each use instruction instantiates the named stripe at the current location in the assembler, just as if it were defined there. This statement is only valid at the top level of a PipeRench assembly file, outside of any block.
+
+5.7 Processing Element Statement
+One of the statements which can appear in a stripe description block is used to define what the processing elements in the stripe will do. The syntax for this statement is
+pe.<range expression> = <functionality>;
+Range expression is a list of which PEs will be affected by this assignment, and is described in Section 5.4. Functionality describes the logical operation which the processing element will perform. It can be the name of a previously defined function block, or it can be a logical expression. Both of these are described in Section 5.10.
+
+5.8 Routing
+
+Routing statements are used to describe how to connect various signals to each other. Signals and their various components are discussed in Section 5.8.1. Routing statements are then introduced. The most basic routing statement is used to connect an output line to an input (see Section 5.8.4). Another routing statement can set an input equal to a constant value (see Section 5.8.5). There is a statement which specifies register loading (see Section 5.8.6). Finally, there is a routing statement which defines access to the global busses (see Section 5.8.7).
+
+5.8.1
+
+Signals In order to connect two lines together, the user has to specify what signal is to be routed. A signal defines which stripe and PE an I/O appears in, and which I/O it is. Each signal is made up of three parts, each separated by a period:
+
+PipeRench Manual
+
+25of 41
+
+26 of 41
+
+The CHASM Assembly Language
+
+[<offset> .] [<range expression> .] <signal name>
+
+Offset is described below, and is optional. Range expression is an optional list of values which identify which PEs are being routed, and is explained in Section 5.4. Finally, the signal name is the name of an I/O line from the PE, as described in Section 5.8.3.
+
+5.8.2
+
+Offset
+The first signal part, the offset, describes which stripe the signal is in, and can be either this, prev, or omitted entirely. If omitted, the assembler assumes the offset is this. Almost all signals will be from this stripe, and will therefore not require the offset to be specified. The only exception is when the registered output of the previous stripe is needed, in which case prev will be used.
+
+5.8.3
+
+Signal Names
+The final item in a signal is the name of the input or output line. This is simply the name of one of the I/O's described in Section 3.2 (Cin, Xin, Zin, A, B, Cout, Coutbar, Xout, Zout, Out, R<digits>). The global lines do not share the same syntax as other signals, and will be described later in Section 5.8.7.
+
+Pass registers can be specified by R followed by a non-negative integer (the R<digits> construct). Users can specify as many pass registers per PE as they like.
+
+5.8.4 Routing Signal Lines The syntax for a routing statement is:
+<destination signal> = <source signal> [ <modifier> ];
+
+Signal is described in Section 5.8.1, while the optional modifier allows shifting or rotating of the source signal. The assembler supports all of the routing combinations described in Section 3.3.
+
+When routing signals, the assembler knows how to set a number of destination signals equal to one source, or a number of destination signals equal to a like number of source signals. If source and destination each contain multiple signals, the assembler performs a one to one mapping of source signals to destination signals. The first source is connected to the first destination, the second source to the second destination, and so on. In these cases, the results are always the same as if the programmer had written a series of statements, each assuaging one element of the source range to one element of the destination range. Pay special attention to the order in which ranges of PEs are defined. As a simple example, the line
+{3..0}.A = {3..0}.R0;
+
+is shorthand for the following four lines
+3.A = 3.R0; 2.A = 2.R0; 1.A = 1.R0; 0.A = 0.R0;
+
+PipeRench Manual
+
+PipeRench Manual
+
+The CHASM Assembly Language
+The assembler will not allow assignments of multiple source signals to a single destination, nor will it allow a number of sources to be routed to an unlike number of destinations.
+The modifier expression is used to shift or rotate the source signal before assigning it to the destination. To shift left, use the modifier "<< <number>", where number indicates how many bits to shift left. Zeros are shifted into the least significant bit positions. As an example, consider the following statements:
+5.A = prev.5.R0 << 1; 5.B = prev.2.R0 << 5;
+The first line will set A in PE number 5 equal to the value of prev.5.R0 shifted left one bit. The bit shifted into the least significant digit will be a zero. The most significant bit will then be truncated to make the signal equal to the size of the A input. If R0 held 1101 then A would be 1010. If we assume that all processing elements are 4 bits wide, the second statement would be the same as setting 5.B equal to zero, since 5 zeros will be shifted in and will then be truncated to four bits.
+When shifting a range of sources, remember that the assembler separates a range of assignments into a number of individual assignments. So, for example,
+4..2.A = prev.4..2.R0 << 2;
+Will set 4.A = prev.4.R0 << 2; 3.A = prev.3.R0 << 2; 2.A = prev.2.R0 << 2;
+This means that the least two significant bits to each A input will be 0. If you wish to shift the output of a number of PEs by a certain number of bits, use the rotate command instead.
+Rotates use the expression "<<< <number>". Unlike a shift, a rotate expression will not shift zeros into the least significant bits. Instead, the high order bits from the same register number in an adjacent PE will be shifted in. In order to better understand how the rotates work, it is best to view the set of all registers with a given number (for instance, the register R2 from each PE) as one unit. A rotate only picks bits from registers with the same number (all R2's), and will never include bits from a register with a different number (R1 or R3, for example). To illustrate the point,
+5.A = prev.5.R2 <<< 2;
+Will set A equal to the 2 least significant bits of prev.5.R2 concatenated with the 2 most significant bits of prev.4.R2. This is not the same as the 2 least significant bits from prev.5.R2 and the 2 most significant bits of prev.5.R1.
+Shift right and rotate right are not supported, either by the architecture or the assembler (although a rotate right can be accomplished by a rotate left). Values can be rotated more than the width of a PE; the assembler will correctly translate that into an assign-
+27of 41
+
+The CHASM Assembly Language
+
+ment from a PE to the right of the input PE plus a rotate of less than the width of a PE. For example
+5.A = prev.5.R2 <<< 6;
+
+Will get the 2 least significant bits of prev.4.R2, concatenate them with the 2 most significant bits of prev.3.R2 and assign them to A. It is exactly the same as the statement
+5.A = prev.4.R2 << 2;
+
+5.8.5
+
+Routing Constant Values Another routing statement can be used to set an input equal to a constant decimal value. The syntax is similar to the syntax described in the previous section, except that the source signal is replaced by the @ character followed by an integer:
+
+<destination signal> = @ <integer>;
+
+For example,
+
+{7..4}.A = @ 12;
+
+sets each of the inputs 7.A, 6.A, 5.A, and 4.A in the current stripe equal to the constant 12. Keep in mind that this constant is specified in decimal.
+
+5.8.6
+
+Loading Registers Since the only value which can be loaded into a register is the combinational output from the current PE (i.e. the signal Out), the syntax to load a register is simple. Simply type
+
+load <register>;
+
+Where register describes which registers to load. Keep in mind that only one register can be loaded in a particular processing element. Also, if no register is explicitly loaded, all registers will be passed down to the next stripe without being changed. If the line
+load {4..3}.R4;
+
+appeared in a stripe description block, the register 3.R4 would be loaded with the combinational output of PE 3 and 4.R4 would be loaded with the combinational output of PE 4.
+
+It is possible to only load a register if a particular condition is true. If you wish to load a pass register if the value of a signal is a certain constant, the syntax is
+load <register> if <integer> . <signal> = <integer>;
+
+Signal can be any signal except Out, R<digits>, or a global bus. Note that only one line can be tested in the conditional expression; attempting to check for a range of signals equal to a value is not allowed.
+
+28 of 41
+
+PipeRench Manual
+
+The CHASM Assembly Language
+
+As an example, suppose that if the Xin signal in PE number 4 equals one, the value computed in the stripe should be stored in R2, and the value in computed in PE 3 should be stored in its R1. The following bit of code would accomplish the task:
+load 4.R2 if 4.Xin = 1; load 3.R1 if 4.Xin = 1;
+
+5.8.7
+
+The Global Bus
+The global bus is a special case of the routing statement. Each PE can either read or write to a specific set of lines on each global bus (assuming PEs are 4 bits wide, PE 0 can only write to bits 3-0 of each global bus). Thus, there is no need to specify which bits of a global bus are going to be accessed. Instead, the only information needed is which global bus a PE will access. The syntax for a global bus signal is
+
+global.<range expression>
+
+where range expression identifies which global bus will be accessed and can be a number, range, or list of numbers and ranges as described in Section 5.4. A global bus signal can be used as either a source or destination signal in a routing expression.
+
+Ranges of numbers should be used with care with global busses. For example, global.{3..0} = 0.R0 means that bits 3-0 of each global bus will get the value from 0.R0. global.{3..0} = {3..0}.R0 means that
+global.3 = 3.R0; // Global 3, bit 15..12 = 3.R0 global.2 = 2.R0; // Global 2, bit 11..8 = 2.R0 global.1 = 1.R0; // Global 1, bit 7..4 = 1.R0 global.0 = 0.R0; // Global 0, bit 3..0 = 0.R0
+
+This is legal, but it would be unusual to drive so many global busses from one stripe. Global.0 = 3..0.R0 would assign the output of the first four PEs in a stripe to global bus 0's bits 15-0, which is a much more useful operation.
+
+5.9 Saving and Restoring Stripes
+As Section 3.2.7 explains, a stripe's contents can be stored when it is swapped out of the physical fabric and restored when the stripe is reloaded. Currently, the contents of register R0 from each PE are saved and restored. The assembler syntax which indicates that a stripe should be saved or restored is
+save . <range expression>; restore . <range expression>;
+The value of range expression is ignored, since the simulator can not save and restore individual PEs from a stripe. In order for the save and restore statements to simulate correctly, global busses must be allocated for their use. This is explained in Section 3.5.
+
+5.10 Function Definition Blocks
+There are two ways to specify what function a particular PE is supposed to perform. The first way, specifying an expression using signal names and logical operators, is the sim-
+
+PipeRench Manual
+
+29of 41
+
+TABLE 3. 30 of 41
+
+The CHASM Assembly Language
+
+plest option, but there are certain operations which can not be accomplished using this syntax. Defining a function by listing its minterms or maxterms is more powerful, but more complex.
+5.10.1 Logical Expression Syntax This section describes how to specify a function using an expression syntax. This is best illustrated by an example:
+pe.0 = A + B;
+The function performed is immediately obvious as a B-bit addition, and the carry chain is enabled automatically. If addition or subtraction greater than B bits is desired, the function must be specified for a range of PE's. For instance, the following statement sets up a subtraction of 3*B bits:
+pe.{2..0} = A - B;
+You can use any operator from Table 3 in an expression. All are binary operators, except for the ~ operator, which indicates unary inversion.
+
+Logical Operators
+& AND | OR ^ XOR ~^ XNOR
+
++ Addition - Subtraction ?: Conditional ~ Inversion
+
+Operator precedence and associativity work the same way as they do in C language expressions. There are a couple of things to watch out for in this syntax, however:
+· You can only use the three primary input signals, A, B, and Xin, and two constants, 0 and 1, as operands in any function expression.
+· You can use the additive binary operators, + and -, in any expression, but they must be at the top of the expression, and one of the input signals to this operator must be either A or B. For example:
+
+(A + (B ^ A ^ Xin)) // Legal, albeit weird
+
+(Xin + (A | B))
+
+// Not legal
+
+(A | (B + Xin))
+
+// Not legal
+
+5.10.2
+
+Function Definition Blocks A function definition block is used to define the operation of a processing element. It contains statements which identify the output of each 3-LUT, as well as statements to control the carry chain and shift logic contained in the PE. Let's start with an example:
+
+function add low; 1, 2, 5, 6;
+
+PipeRench Manual
+
+PipeRench Manual
+
+The CHASM Assembly Language
+carry_enable = 1; shift_input = A; end function;
+This function specifies an addition operation on inputs A and B. This function can then be invoked in the stripe definition for any stripe, as in the following example (see Section 5.7 for more detail):
+pe.1 = add; pe.{5..9} = add;
+Let's first look at the first two lines of the function definition. The first line, function add low;
+specifies the function name (add) and whether this function is specified in sum-of-products (low) or product-of-sums (high) format. The next line,
+1, 2, 5, 6;
+specifies the minterms of the equation, since this is a sum-of-products (SOP) function. The sequence of bits from most- to least-significant is Xin, B, A. So this second line of the function definition dictates that a high signal be output from the PE's 3-LUT for input combinations Xin BA, XinBA, XinBA, XinBA (1, 2, 5, and 6 respectively). All other input combinations cause a low signal to be output from the 3-LUT, according to the low modifier in the function's first line (see above).
+So if you want to specify that a 1 on input A should cause a 1 on the output, you would write the following function:
+function passA low; 1, 3, 5, 7;
+end function;
+Inverting B could be done either this way: function invB low; 0, 1, 4, 5; end function;
+or this way: function invB high; 2, 3, 6, 7; end function;
+The first method uses the SOP expression, while the second uses the POS equivalent.
+There are two other modifying statements that can be placed in a function definition. The first is the carry_enable statement, which turns the ripple-carry logic in the PE either on (1) or off (0). To build an adder, you want to build an XOR(A,B) function in the 3-LUT, and turn on the carry_enable:
+function addAB high; 1, 2, 5, 6;
+31of 41
+
+The CHASM Assembly Language
+
+carry_enable = 1; end function;
+The ripple-carry logic works by looking at the output of the 3-LUT (which is the sum bit), and either the A or B input to the 3-LUT. Whether it looks at A or B is determined by the shift_input statement. In the above example, choosing either A or B will work fine. Let's say we want to build an array multiplier cell with the functionality to add A to B if Xin is 1 and just pass A if Xin is 0. This could be written in the C language as A+(B&Xin). The problem here is that the second operand to the adder is "buried" within the PE. The carry logic must be told to look at the A input to determine the proper value of the carry-out. We write this function like this:
+function BandXplusA high; 1, 3, 5, 6; carry_enable = 1; shift_input = A;
+end function;
+
+5.10.3
+
+Combining Function Blocks and Expression Syntax
+It is acceptable to use an expression in place of the minterm or maxterm list in a function definition block. It might be necessary to do this if you wish to override the default values assigned to carry_enable and shift_input by the expression syntax. In this case, the expression syntax must be contained in parenthesis. For example, if you wanted to add A and B, but set shift_input to pick the B input instead of the default value of A, you could define the function:
+
+function foo low; (A + B); shift_input = B;
+end function;
+
+Beware of the difference between the low and high keywords. Defining a function with as low means that every output is 0, except for the terms specified in the logical expression. Defining a function as high, on the other hand, means that every output is 1, except for the terms specified by the function, which has the effect of inverting the symbolic expression used to describe the function. Thus, this function block is a NAND gate:
+function foo high; (A & B & Xin);
+end function;
+
+32 of 41
+
+PipeRench Manual
+
+The CHASM Assembly Language
+
+5.11 An Example Program: 4x4 Multiplier
+For this simple application, we assume four 4-bit PEs per stripe. Operands M and N are brought in on global bus 0. We will output the 8-bit result, P=M*N, to global bus 1.
+The strategy here is to simulate doing the multiplication by hand. First, the most significant bit of M is multiplied by each bit of N, and the resulting partial product is shifted three places to the left. Then the second-most significant bit of M is multiplied by each bit of N, and this result is shifted two places to the left and added to the previous partial product. This progression continues until the entire product has been computed.
+In the stripes named last and full, PEs 2 and 3 work together to sum up the result. Values from R0 from previous stripe's PE 2 (prev.2.R0) are shifted one place to the left by the barrel shifter before they are input to PE 2 of the current stripe. The topmost bit from PE 2's register is picked up by PE 3 through a left rotate (see Section 5.8.4 for details on the rotate and shift operations). Combined with the carry-out capability of PE 2, this method can be used to "link" PEs 2 and 3 in order to output an 8-bit result.
+For details on how to simulate this CHASM program, please see Section 6.0.
+Similar example programs can be found in the "idea2" and "fp" subdirectories of the assembler. Section 6.1 contains information on how to extract these files.
+
+// 4x4 multiplier
+
+function shiftAThruCarryChain low; // This function executes a left shift of the PE's A input // We don't want minterm definitions here, we want the LUT // outputs to stay at zero and pass A thru the carry-out
+shift_input = A; carry_enable = 1; end function;
+
+function AplusCin low;
+
+// Adds the PE's carry-in value to the A input
+
+1, 3, 5, 7;
+
+// Pass A through the LUTs
+
+shift_input = A;
+
+carry_enable = 1; // Allow carry-in to ripple through
+
+end function;
+
+PipeRench Manual
+
+33of 41
+
+34 of 41
+
+The CHASM Assembly Language
+
+// For each stripe we'll define the
+
+stripe first;
+
+// inputs to each PE, then state
+
+// that PE's desired function
+
+0.A = Global.0;
+
+// Input M from global input bus
+
+0.Cin = @0;
+
+// Carry-in set to a constant 0
+
+pe.0 = shiftAThruCarryChain;// Top bit is carried out
+
+1.A = Global.0; 1.Xin = 0.Cout; pe.1 = A;
+2.Xin = 1.Xout;
+2.B = 1.out; pe.2 = (B & Xin);
+pe.3 = 0;
+
+// Input N from global input bus // Top bit of M is passed into PE 1 // Just pass N through to R0 // Since 1.Xout = 1.Xin, // this statement simply passes // 0.Cout through PE 1 into 2.Xin // Input N to this PE // 2.Xin is now the top bit of M, // so we'll and it with N for the // first partial product // Don't need this PE yet
+
+load R0;
+
+// Send all of the outputs to R0
+
+end stripe;
+
+stripe full;
+
+0.A = prev.0.R0; // Input shifted M value
+
+0.Cin = @0;
+
+pe.0 = shiftAThruCarryChain; // Shift M one more time and
+
+// and carry out the top bit
+
+1.A = prev.1.R0;
+
+1.Xin = 0.Cout;
+
+pe.1 = A;
+
+// Keep passing N through PE 1
+
+2.A = prev.2.R0 << 1; // Input previous sum, shifted
+
+// to the left one place
+
+2.B = 1.out;
+
+2.Xin = 1.Xout;
+
+pe.2 = (A+(B & Xin)); // Compute next partial product
+
+// and add it to the previous sum
+
+3.A = prev.3.R0 <<< 1;// Rotate the top 4 bits of the
+
+// sum to the left, and pick up
+
+// PE 2's most significant bit
+
+3.Cin = 2.Cout;
+
+// Continue the ripple-carry
+
+pe.3 = AplusCin; // chain from PE 2
+
+load R0;
+
+end stripe;
+
+use stripe full;
+
+// Re-use this stripe
+
+PipeRench Manual
+
+The CHASM Assembly Language
+
+stripe last;
+
+// Essentially the same as full,
+
+// except here we finish and output
+
+// the product to global bus 1
+
+0.A = prev.0.R0;
+
+0.Cin = @0;
+
+pe.0 = shiftAThruCarryChain;
+
+1.A = prev.1.R0; 1.Xin = 0.Cout; pe.1 = A;
+
+2.A = prev.2.R0 << 1; 2.B = 1.Out; 2.Xin = 1.Xout; pe.2 = (A + (B & Xin));
+
+3.A = prev.3.R0 <<< 1; 3.Cin = 2.Cout; pe.3 = AplusCin;
+
+Global.1 = {3..2}.R0;
+
+load R0; end stripe;
+
+PipeRench Manual
+
+35of 41
+
+The Assembler and Simulator
+6.0 The Assembler and Simulator
+The PipeRench Assembler: The Cached Virtual Hardware Assembler is used to generate bit streams which configure the PipeRench chip. The assembler takes standard CHASM code, as described in Section 5.0, and converts it to the binary codes needed to control the PipeRench chip. It also generates Verilog code which can be used for software simulations of the chip.
+The PipeRench Simulator: CVHSim is a simulator for the PipeRench architecture. By supplying the control words and memory data, the simulator will show what each stripe is doing at every clock cycle so applications can be debugged and benchmarked. This section will explain how to setup and run the simulator on your design.
+To download the latest releases of the assembler and simulator, please visit http://www.ece.cmu.edu/research/piperench/
+6.1 Getting Started
+Several steps must be taken to prepare the assembler and simulator for use:
+1. Change to your home directory and copy into it the file `prtools.tar.gz'.
+2. Extract the file: gunzip ./prtools.tar.gz; tar -xf ./prtools.tar
+Two directories will be created under your home directory: "simulator" and "assembler".
+3. Include the directories for the assembler and simulator executables in your path: set path = ($path ~/assembler) set path = ($path ~/simulator/bin)
+It is recommended that you add these two lines to your `.login' file.
+4. Set the CVHSIM_ROOT environment variable to point to the top-level simulator directory: setenv CVHSIM_ROOT ~/simulator
+This line should also be added to your `.login' file.
+5. You may now wish to delete the file prtools.tar, as it is approximately 1 MB in size: rm prtools.tar
+
+36 of 41
+
+PipeRench Manual
+
+The Assembler and Simulator
+
+6.2 The Assembler
+
+6.2.1
+
+Making the Assembler
+The assembler program must be compiled before it can be used. The Makefile provided in the "assembler" directory should work on most systems. Use Gnu Make if at all possible. If Gnu's make isn't available, you may have to edit the Makefile's rule for making from `.y' files. To make the assembler, simply type
+
+make cvhasm
+
+The Makefile has also been tested using DJ Delorie's port of GCC to MS-Dos and Windows. If this tool is used, two changes must be made. First, change all occurrences of ..tab to _tab in the Makefile and the `cvhasm.l' file. Second, change the executable name from `cvhasm' to `cvhasm.exe'. The DJGPP compiler and other tools can be downloaded from
+http://www.delorie.com/djgpp/
+
+6.2.2 Running the Assembler To run the PipeRench Assembler, type
+cvhasm [-h] [-c] [-g] [-o <directory>] [-r] [-s] [-v] [-w <level>] <input file>
+
+-h Display usage information and list of command line options.
+
+-c Display a count of routing usage
+
+-g Don't check for multiple stripes writing to the same global bus.
+
+-o Put code in defined output directory.
+
+-r Display register usage information.
+
+-s Force the simulation to stop after a given number of clock ticks.
+
+-v Print version information.
+
+-w Display warning messages of the given level: 0 = none, 1 (default) = severe, 2 = all
+
+Input file may be any valid CHASM Assembler file. Several output files will be created:
+· config.data -- PipeRench configuration words in binary · control.data -- corresponding control words in hexadecimal · sim.txt -- summary of the LUT and stripe functions; see `README-sim.txt' in the
+"assembler" directory for details · stats.out -- statistics on number of stripes and configurations used · stripe.v -- behavioral Verilog for the stripe's function · header_arch.v -- architectural parameters for the fabric
+
+PipeRench Manual
+
+37of 41
+
+38 of 41
+
+The Assembler and Simulator
+6.3 The Simulator
+6.3.1 Directory Structure The top-level simulator directory contains the following subdirectories: 1. behavioral 2. structural 3. common 4. perl 5. bin
+The "behavioral" directory contains behavioral Verilog for both the datapath and control modules of PipeRench, while the "structural" directory contains structural code. There is no structural controller at the moment, so the behavioral controller is copied temporarily during simulation. The behavioral and structural directories contain the subdirectories "datapath" and "control," which hold the Verilog files, and "apps," which contains several example applications.
+The "common" directory contains some top level modules that are common to both the behavioral and structural simulators.
+The "perl" directory contains 2 subdirectories: "create_verilog" and "test_tools". The tools in "create_verilog" create all of the Verilog code that changes with the number of stripes during simulation. These temporary files are created in the current directory and will be deleted automatically upon completion of the simulation. "Test_tools" contains scripts that verify outputs of the simulator against the correct outputs of a test suite of applications.
+The actual executable for the simulator resides in the "bin" directory.
+6.3.2 Required Files Your working directory will have to contain the following files in order to run a simulation:
+· config.data -- all of the configuration words in binary. The order should correspond to the addresses specified by the "next address" field in the control words.
+· control.data -- the corresponding control words in hex. There should be a one-toone correspondence between the words in this file and those in `config.data'. See Section 3.4 for more information on the PipeRench configuration controller.
+· stripe.v (behavioral simulation only) -- behavioral Verilog code for the stripe's function. Essentially stripe.v represents the combinational function output. However, it also has the additional flexibility of two busses where one may be registered. The extra bus can be used to provide pass register features.
+· memory.data -- initial data words that need to be processed by the pipeline. Up to 1024 words can be provided from memory to the global input bus under the current architecture. Each memory controller typically needs its own partition in memory (defined using the initial index for each controller). Store and restore, however, will use the same partition.
+PipeRench Manual
+
+The Assembler and Simulator
+· memconfig.data --5 hexadecimal numbers for each of the four memory controllers. These numbers specify the access type, initial index, stride value, period, and stride direction parameters. The first set of five numbers should correspond to global bus 0, the second set of 5 to global bus 1, etc. See Section 3.5 for a more detailed description of the memory controller architecture.
+If you wish, you may have the assembler create the files `config.data' and `control.data' from CHASM code. See Section 6.2 for details.
+6.3.3 Running the Simulator Once the relevant files are in the directory, the simulator may be executed by typing the following at the command line: cvhsim [-h] [-k] [-s] [-c <number of cycles>] [-n] [-p <number of physical stripes>] [-m <number of words>] [-f <number of clock ticks>] <pathname to source>
+-h Display usage information and list of command line options.
+-k Don't delete Verilog after the simulation runs.
+-s Perform a structural simulation. The default is behavioral.
+-c Define how long the simulation should run. Number of cycles defines how many pieces of data the virtual pipeline will process, and therefore how many results it will produce. WARNING: This option is not mandatory, but recommended since the default of 50 cycles may produce garbage.
+-n Turn off waves output (see below).
+-p Dictate the number of physical stripes the fabric will contain. Defaults to 8 physical stripes.
+-m Force a data memory of size number of words. Default is 1024 words.
+-f Force the simulation to stop after a given number of clock ticks.
+Pathname to source is the directory containing your `stripe.v', `config.data', `control.data', `memconfig.data', and `memory.data' files.
+Once the simulator has completed its run, you will notice several new additions to the working directory: · waves -- subdirectory containing files which can be read by a graphical output pack-
+age such as SimWave · out.data -- the current status of the stripes and registers at each clock tick · memory.out -- the contents of memory each clock cycle
+
+PipeRench Manual
+
+39of 41
+
+The Assembler and Simulator
+
+6.4 Examples
+
+6.4.1 4x4 Multiplier We will now assemble and simulate the 4x4 multiplier program shown in Section 5.11. First we must change to the proper directory:
+cd ~/assembler/mult4x4
+
+Next we'll assemble the program: cvhasm mult4x4.asm
+
+The assembler has now created the necessary files, so we'll run the simulator now: cvhsim -p 5 -c 20 .
+
+Don't forget the period on the end to specify the current directory; otherwise, you'll get an error. This statement instructs the simulator to use a fabric with 5 physical stripes, and to run the simulation long enough for 20 results to be produced.
+
+Output files will be placed in the mult4x4 directory as described above. If you compare them with the files having an extension of .gold, there should be no differences.
+
+6.4.2
+
+IDEA Encryption
+The subdirectory "idea2" within the assembler directory contains an implementation of the core of the IDEA encryption algorithm. It performs multiplication of a number by a constant, modulo 216-1. `Idea2.cvh' is the CHASM file for this application, and `idea2.v' is a Verilog description. `Verilog.out' is the output of a run of this Verilog app.
+
+The .gold versions of the files were produced by the assembler and cvhsim -p 9 -c 25 .
+
+The results correspond to those in `verilog.out'.
+
+6.4.3 Floating Point Adder/Subtractor
+
+The final example, in the "fp" subdirectory, is a floating point adder and subtractor. The CHASM file name is `fp.cvh'.
+
+The .gold files were generated with cvhsim -p 16 -c 3 .
+
+40 of 41
+
+PipeRench Manual
+
+Conclusion
+7.0 Conclusion
+Hopefully this document has provided you with an understanding of the PipeRench architecture, the assembly language, and the use of the assembler and simulator. For further information, as well as updates to this manual and the PipeRench software tools, please visit the PipeRench web site:
+http://www.ece.cmu.edu/research/piperench/
+7.1 Future Improvements in Architecture · None planned
+7.2 Future Improvements in Assembler · Ability to specify a range as an 8 bit set of PEs, but not have to tell the assembler exactly where they are placed · More and better error and warning messages
+7.3 Future Improvements in Simulator · Graphical interface showing PE function and routing · Easier setup
+8.0 References
+[1] Schmit, H. "Incremental Reconfiguration for Pipelined Applications," Proceedings of IEEE Symposium on FPGAs for Custom Computing Machines, pp. 47-55, 1997.
+[2] S. Cadambi, J. Weener, H. Schmit, S. C. Goldstein, and D. E. Thomas, "Managing Pipeline Reconfigurable FPGAs," In Sixth International ACM/SIGDA Symposium on Field-Programmable Gate Arrays. ACM, February 1997.
+[3] D. Cherepacha and D. Lewis. "A Datapath Oriented Architecture for FPGAs." In Second International ACM/SIGDA Workshop on Field-Programmable Gate Arrays. ACM, February 1994.
+[4] A. DeHon, Reconfigurable Architectures for General-Purpose Computing. Ph.D. Thesis, AI Technical Report 1586, MIT Artificial Intelligence Laboratory, September 1996.
+[5] S. Hauck, T. Fry, M. Hosler, and J. Kao, "The Chimaera Reconfigurable Functional Unit," Proceedings of IEEE Symposium on FPGAs for Custom Computing Machines, pp. 87-97, 1997.
+[6] S. Singh, J. Rose, P. Chow, D. Lewis, "The Effect of Logic Block Architecture on FPGA Performance," IEEE JSSC, Vol. 27 No. 3, pp. 281-287, March 1992.
+
+PipeRench Manual
+
+41of 41
+
+
